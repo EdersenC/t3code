@@ -1216,11 +1216,16 @@ export const enrichCursorSnapshot = (input: {
           if (discoveredModels.length === 0) {
             return Effect.void;
           }
+          const discoveredSlugs = new Set(discoveredModels.map((m) => m.slug));
+          const mergedModels = [
+            ...discoveredModels,
+            ...baseSnapshot.models.filter((m) => !discoveredSlugs.has(m.slug)),
+          ];
           return publishSnapshot(
             stampIdentity({
               ...baseSnapshot,
               models: providerModelsFromSettings(
-                discoveredModels,
+                mergedModels,
                 PROVIDER,
                 settings.customModels,
                 EMPTY_CAPABILITIES,
