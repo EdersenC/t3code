@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const DpopPublicJwk = Schema.Struct({
@@ -8,13 +9,17 @@ export const DpopPublicJwk = Schema.Struct({
 });
 export type DpopPublicJwk = typeof DpopPublicJwk.Type;
 
-export function normalizeDpopHtu(url: string): string | null {
+export function normalizeDpopHtuOption(url: string): Option.Option<string> {
   try {
     const parsed = new URL(url);
     parsed.hash = "";
     parsed.search = "";
-    return parsed.toString();
+    return Option.some(parsed.toString());
   } catch {
-    return null;
+    return Option.none();
   }
+}
+
+export function normalizeDpopHtu(url: string): string | null {
+  return Option.getOrNull(normalizeDpopHtuOption(url));
 }
