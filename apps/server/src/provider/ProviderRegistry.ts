@@ -257,6 +257,9 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   instanceId: instance.instanceId,
   driverKind: instance.driverKind,
   getSnapshot: instance.snapshot.getSnapshot,
+  ...(instance.snapshot.isInitialSnapshot === undefined
+    ? {}
+    : { isInitialSnapshot: instance.snapshot.isInitialSnapshot }),
   refresh: instance.snapshot.refresh,
   streamChanges: instance.snapshot.streamChanges,
 });
@@ -636,15 +639,15 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             const source = buildSnapshotSource(instance);
             const provider = yield* source.getSnapshot;
-            const bootFallback = fallbackByInstance.get(instanceId);
-            // Keep hydrated cache state when this is still the exact pending
-            // snapshot read during boot. A probe that completed before the
-            // subscription was attached differs here and is applied instead.
+            // Keep hydrated cache state only while the original boot instance
+            // still exposes its explicitly-marked initial snapshot. Comparing
+            // snapshot values is insufficient: the first probe may have
+            // completed before registry construction, making the boot-time
+            // fallback a real live result that must replace stale disk state.
             if (
               cachedInstanceIds.has(instanceId) &&
               bootInstancesById.get(instanceId) === instance &&
-              bootFallback !== undefined &&
-              Equal.equals(provider, bootFallback)
+              source.isInitialSnapshot?.(provider) === true
             ) {
               return;
             }
