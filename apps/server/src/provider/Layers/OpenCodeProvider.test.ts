@@ -250,4 +250,22 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
       );
     }),
   );
+
+  it.effect("keeps IPv6 brackets in configured server diagnostics", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventoryError = new Error("fetch failed: connect ECONNREFUSED ::1:9999");
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings({
+          serverUrl: "http://[::1]:9999/private",
+          serverPassword: "secret-password",
+        }),
+        process.cwd(),
+      );
+
+      NodeAssert.equal(
+        snapshot.message,
+        "Couldn't reach the configured OpenCode server at http://[::1]:9999. Check that the server is running and the URL is correct.",
+      );
+    }),
+  );
 });

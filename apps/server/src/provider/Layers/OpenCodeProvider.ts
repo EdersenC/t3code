@@ -62,8 +62,7 @@ function normalizedErrorMessage(cause: unknown): string | undefined {
 function openCodeServerDisplayTarget(input: string): string | undefined {
   try {
     const url = new URL(input);
-    const port = url.port === "" ? "" : `:${url.port}`;
-    return `${url.protocol}//${url.hostname}${port}`;
+    return `${url.protocol}//${url.host}`;
   } catch {
     return undefined;
   }
