@@ -210,7 +210,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
       runtimeMock.state.inventoryError = new Error("401 Unauthorized");
       const snapshot = yield* checkOpenCodeProviderStatus(
         makeOpenCodeSettings({
-          serverUrl: "http://127.0.0.1:9999",
+          serverUrl: "http://url-user:url-password@127.0.0.1:9999/private?token=secret#fragment",
           serverPassword: "secret-password",
         }),
         process.cwd(),
@@ -243,6 +243,10 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
       NodeAssert.equal(
         snapshot.message,
         "Couldn't reach the configured OpenCode server at http://127.0.0.1:9999. Check that the server is running and the URL is correct.",
+      );
+      NodeAssert.doesNotMatch(
+        snapshot.message ?? "",
+        /url-user|url-password|private|token|secret|fragment/,
       );
     }),
   );

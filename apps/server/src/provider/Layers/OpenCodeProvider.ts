@@ -59,6 +59,16 @@ function normalizedErrorMessage(cause: unknown): string | undefined {
   return normalizeProbeMessage(cause.message);
 }
 
+function openCodeServerDisplayTarget(input: string): string | undefined {
+  try {
+    const url = new URL(input);
+    const port = url.port === "" ? "" : `:${url.port}`;
+    return `${url.protocol}//${url.hostname}${port}`;
+  } catch {
+    return undefined;
+  }
+}
+
 function formatOpenCodeProbeError(input: {
   readonly cause: unknown;
   readonly isExternalServer: boolean;
@@ -89,9 +99,13 @@ function formatOpenCodeProbeError(input: {
       lower.includes("timeout") ||
       lower.includes("socket hang up")
     ) {
+      const serverTarget = openCodeServerDisplayTarget(input.serverUrl);
       return {
         installed: true,
-        message: `Couldn't reach the configured OpenCode server at ${input.serverUrl}. Check that the server is running and the URL is correct.`,
+        message:
+          serverTarget === undefined
+            ? "Couldn't reach the configured OpenCode server. Check that the server is running and the URL is correct."
+            : `Couldn't reach the configured OpenCode server at ${serverTarget}. Check that the server is running and the URL is correct.`,
       };
     }
 
