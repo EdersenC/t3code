@@ -64,7 +64,7 @@ import {
 } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
-import type { LayoutVariant } from "../../lib/layout";
+import { deriveCenteredContentHorizontalPadding, type LayoutVariant } from "../../lib/layout";
 import { buildThreadFilesNavigation } from "../../lib/routes";
 import { MOBILE_CODE_SURFACE, MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
@@ -106,6 +106,7 @@ export interface ThreadFeedProps {
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
+  readonly contentMaxWidth?: number;
   readonly layoutVariant?: LayoutVariant;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
 }
@@ -1132,7 +1133,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     headers?: Record<string, string>;
   } | null>(null);
   const horizontalPadding = props.layoutVariant === "split" ? 20 : 16;
-  const contentWidth = Math.max(0, viewportWidth - horizontalPadding * 2);
+  const contentHorizontalPadding = deriveCenteredContentHorizontalPadding({
+    viewportWidth,
+    maxContentWidth: props.contentMaxWidth ?? null,
+    minimumPadding: horizontalPadding,
+  });
+  const contentWidth = Math.max(0, viewportWidth - contentHorizontalPadding * 2);
   const userBubbleMaxWidth = contentWidth * 0.85;
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
   const insets = useSafeAreaInsets();
@@ -1444,7 +1450,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ListHeaderComponent={<View style={{ height: topContentInset }} />}
           contentContainerStyle={{
             paddingTop: 12,
-            paddingHorizontal: horizontalPadding,
+            paddingHorizontal: contentHorizontalPadding,
           }}
         />
         {props.feed.length === 0 ? (

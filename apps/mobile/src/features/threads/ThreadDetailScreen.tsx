@@ -27,7 +27,7 @@ import { AppText as Text } from "../../components/AppText";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import type { LayoutVariant } from "../../lib/layout";
+import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import type {
   PendingApproval,
@@ -234,6 +234,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const showContent = props.showContent ?? true;
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant === "split";
+  const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = useMemo(
@@ -384,6 +385,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               contentInsetEndAdjustment={contentInsetEndAdjustment}
               contentTopInset={headerHeight}
               contentBottomInset={estimatedOverlayHeight}
+              contentMaxWidth={contentMaxWidth}
               layoutVariant={layoutVariant}
               skills={selectedProviderSkills}
             />
@@ -398,39 +400,46 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
             offset={{ closed: 0, opened: 0 }}
           >
-            <View ref={composerOverlayRef} onLayout={onComposerLayout} style={{ paddingTop: 8 }}>
-              {props.activeWorkStartedAt ? (
-                <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
-              ) : null}
+            <View
+              ref={composerOverlayRef}
+              onLayout={onComposerLayout}
+              style={{ width: "100%", paddingTop: 8 }}
+            >
+              <View style={{ alignSelf: "center", maxWidth: contentMaxWidth, width: "100%" }}>
+                {props.activeWorkStartedAt ? (
+                  <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
+                ) : null}
 
-              {props.activePendingApproval || props.activePendingUserInput ? (
-                <View className="gap-3 px-4 pb-3" style={{ flexShrink: 0 }}>
-                  {props.activePendingApproval ? (
-                    <PendingApprovalCard
-                      approval={props.activePendingApproval}
-                      respondingApprovalId={props.respondingApprovalId}
-                      onRespond={props.onRespondToApproval}
-                    />
-                  ) : null}
-                  {props.activePendingUserInput ? (
-                    <PendingUserInputCard
-                      pendingUserInput={props.activePendingUserInput}
-                      drafts={props.activePendingUserInputDrafts}
-                      answers={props.activePendingUserInputAnswers}
-                      respondingUserInputId={props.respondingUserInputId}
-                      onSelectOption={props.onSelectUserInputOption}
-                      onChangeCustomAnswer={props.onChangeUserInputCustomAnswer}
-                      onSubmit={props.onSubmitUserInput}
-                    />
-                  ) : null}
-                </View>
-              ) : null}
+                {props.activePendingApproval || props.activePendingUserInput ? (
+                  <View className="gap-3 px-4 pb-3" style={{ flexShrink: 0 }}>
+                    {props.activePendingApproval ? (
+                      <PendingApprovalCard
+                        approval={props.activePendingApproval}
+                        respondingApprovalId={props.respondingApprovalId}
+                        onRespond={props.onRespondToApproval}
+                      />
+                    ) : null}
+                    {props.activePendingUserInput ? (
+                      <PendingUserInputCard
+                        pendingUserInput={props.activePendingUserInput}
+                        drafts={props.activePendingUserInputDrafts}
+                        answers={props.activePendingUserInputAnswers}
+                        respondingUserInputId={props.respondingUserInputId}
+                        onSelectOption={props.onSelectUserInputOption}
+                        onChangeCustomAnswer={props.onChangeUserInputCustomAnswer}
+                        onSubmit={props.onSubmitUserInput}
+                      />
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
 
               <ThreadComposer
                 editorRef={composerEditorRef}
                 draftMessage={props.draftMessage}
                 draftAttachments={props.draftAttachments}
                 placeholder="Ask the repo agent, or run a command…"
+                contentMaxWidth={contentMaxWidth}
                 connectionState={props.connectionStateLabel}
                 connectionError={props.connectionError}
                 environmentLabel={props.environmentLabel}
