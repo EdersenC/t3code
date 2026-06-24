@@ -16,7 +16,7 @@ import type {
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import * as Haptics from "expo-haptics";
 import { useHeaderHeight } from "expo-router/build/react-navigation/elements";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { View, type GestureResponderEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
@@ -28,6 +28,7 @@ import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import type { LayoutVariant } from "../../lib/layout";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -208,13 +209,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const insets = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
+  const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerOverlayRef = useRef<View>(null);
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
+  const selectedThreadKeyRef = useRef(selectedThreadKey);
+  const lastScrolledAnchorMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const composerBottomInset = composerExpanded ? 0 : Math.max(insets.bottom, 12);
+  const contentPresentationKind = props.contentPresentation.kind;
+  const selectedThreadFeed = props.selectedThreadFeed;
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
   const activeWorkIndicatorHeight = props.activeWorkStartedAt ? WORKING_INDICATOR_HEIGHT : 0;
@@ -259,25 +265,57 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     [completeDrawerGesture, isSplitLayout],
   );
 
+  useLayoutEffect(() => {
+    selectedThreadKeyRef.current = selectedThreadKey;
+  }, [selectedThreadKey]);
+
   useEffect(() => {
     setAnchorMessageId(null);
-  }, [props.selectedThread.id]);
+    lastScrolledAnchorMessageIdRef.current = null;
+    freeze.set(false);
+  }, [freeze, selectedThreadKey]);
+
+  useEffect(() => {
+    if (
+      anchorMessageId === null ||
+      lastScrolledAnchorMessageIdRef.current === anchorMessageId ||
+      contentPresentationKind !== "ready" ||
+      !selectedThreadFeed.some((entry) => entry.type === "message" && entry.id === anchorMessageId)
+    ) {
+      return;
+    }
+
+    const targetThreadKey = selectedThreadKey;
+    const frame = requestAnimationFrame(() => {
+      if (selectedThreadKeyRef.current !== targetThreadKey) {
+        return;
+      }
+      lastScrolledAnchorMessageIdRef.current = anchorMessageId;
+      void scrollMessageToEnd({ animated: true, closeKeyboard: false }).catch(() => {
+        freeze.set(false);
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    anchorMessageId,
+    freeze,
+    contentPresentationKind,
+    selectedThreadFeed,
+    scrollMessageToEnd,
+    selectedThreadKey,
+  ]);
 
   const handleSendMessage = useCallback(async () => {
+    const targetThreadKey = selectedThreadKey;
     const messageId = await props.onSendMessage();
-    if (messageId === null) {
-      return null;
+    if (messageId === null || selectedThreadKeyRef.current !== targetThreadKey) {
+      return messageId;
     }
 
     setAnchorMessageId(messageId);
-    try {
-      await scrollMessageToEnd({ animated: true, closeKeyboard: true });
-    } catch {
-      freeze.set(false);
-      composerEditorRef.current?.blur();
-    }
+    composerEditorRef.current?.blur();
     return messageId;
-  }, [freeze, props.onSendMessage, scrollMessageToEnd]);
+  }, [props.onSendMessage, selectedThreadKey]);
 
   const collapseComposer = useCallback(() => {
     composerEditorRef.current?.blur();

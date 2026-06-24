@@ -73,7 +73,6 @@ import {
   type ThreadFeedEntry,
   type ThreadFeedLatestTurn,
 } from "../../lib/threadActivity";
-import { relativeTime } from "../../lib/time";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { ThreadWorkLog } from "./thread-work-log";
 import { useAssetUrl } from "../../state/assets";
@@ -822,30 +821,6 @@ function renderFeedEntry(
     );
   }
 
-  if (entry.type === "queued-message") {
-    return (
-      <View className="mb-5 items-end">
-        <View
-          className="max-w-[85%] gap-2 rounded-[22px] rounded-br-[6px] px-3.5 py-2.5 opacity-60"
-          style={{ backgroundColor: userBubbleColor }}
-        >
-          <Text className="font-sans text-base leading-[22px] text-white">
-            {entry.queuedMessage.text}
-          </Text>
-          {entry.queuedMessage.attachments.length > 0 ? (
-            <Text className="font-t3-medium text-xs text-white/75">
-              {entry.queuedMessage.attachments.length} image
-              {entry.queuedMessage.attachments.length === 1 ? "" : "s"} attached
-            </Text>
-          ) : null}
-        </View>
-        <Text className="mt-1.5 px-1 text-right font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
-          {entry.sending ? "dispatching" : `${relativeTime(entry.createdAt)} • pending`}
-        </Text>
-      </View>
-    );
-  }
-
   return (
     <ThreadWorkLog
       activities={entry.activities}
@@ -1222,7 +1197,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const anchoredEndSpace = useMemo(
     () =>
       resolveChatListAnchoredEndSpace(presentedFeed, props.anchorMessageId, (entry) =>
-        entry.type === "message" || entry.type === "queued-message" ? entry.id : null,
+        entry.type === "message" ? entry.id : null,
       ),
     [presentedFeed, props.anchorMessageId],
   );

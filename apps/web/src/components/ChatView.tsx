@@ -1098,7 +1098,6 @@ function ChatViewContent(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
-  const [timelineAnchorMessageId, setTimelineAnchorMessageId] = useState<MessageId | null>(null);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
@@ -1148,7 +1147,7 @@ function ChatViewContent(props: ChatViewProps) {
     LastInvokedScriptByProjectSchema,
   );
   const legendListRef = useRef<LegendListRef | null>(null);
-  const composerOverlayRef = useRef<HTMLDivElement | null>(null);
+  const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
   const isAtEndRef = useRef(true);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
@@ -1157,11 +1156,10 @@ function ChatViewContent(props: ChatViewProps) {
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
-    const composerOverlay = composerOverlayRef.current;
-    if (!composerOverlay) return;
+    if (!composerOverlayElement) return;
 
     const updateHeight = () => {
-      const nextHeight = Math.ceil(composerOverlay.getBoundingClientRect().height);
+      const nextHeight = Math.ceil(composerOverlayElement.getBoundingClientRect().height);
       setComposerOverlayHeight((currentHeight) =>
         currentHeight === nextHeight ? currentHeight : nextHeight,
       );
@@ -1171,9 +1169,9 @@ function ChatViewContent(props: ChatViewProps) {
     if (typeof ResizeObserver === "undefined") return;
 
     const observer = new ResizeObserver(updateHeight);
-    observer.observe(composerOverlay);
+    observer.observe(composerOverlayElement);
     return () => observer.disconnect();
-  }, []);
+  }, [composerOverlayElement]);
 
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef),
@@ -1286,6 +1284,14 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const [timelineAnchor, setTimelineAnchor] = useState<{
+    readonly threadKey: string | null;
+    readonly messageId: MessageId | null;
+  }>({ threadKey: activeThreadKey, messageId: null });
+  if (timelineAnchor.threadKey !== activeThreadKey) {
+    setTimelineAnchor({ threadKey: activeThreadKey, messageId: null });
+  }
+  const timelineAnchorMessageId = timelineAnchor.messageId;
   const activeRightPanelKind = useRightPanelStore((state) =>
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
@@ -3165,7 +3171,6 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     setPullRequestDialogState(null);
-    setTimelineAnchorMessageId(null);
     isAtEndRef.current = true;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
@@ -3729,7 +3734,10 @@ function ChatViewContent(props: ChatViewProps) {
     isAtEndRef.current = true;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
-    setTimelineAnchorMessageId(messageIdForSend);
+    setTimelineAnchor({
+      threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+      messageId: messageIdForSend,
+    });
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -4805,7 +4813,7 @@ function ChatViewContent(props: ChatViewProps) {
 
             {/* Input bar */}
             <div
-              ref={composerOverlayRef}
+              ref={setComposerOverlayElement}
               data-chat-composer-overlay="true"
               className={cn(
                 "pointer-events-none absolute inset-x-0 bottom-0 z-20 pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] pt-1.5 sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)] sm:pt-2",

@@ -40,7 +40,6 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
-import { dispatchingQueuedMessageIdAtom } from "./use-thread-outbox-drain";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -77,7 +76,6 @@ export function useThreadComposerState() {
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
-  const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
 
   useEffect(() => {
@@ -91,17 +89,9 @@ export function useThreadComposerState() {
     () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
-
   const selectedThreadFeed = useMemo(
-    () =>
-      selectedThreadDetail
-        ? buildThreadFeed(
-            selectedThreadDetail,
-            selectedThreadQueuedMessages,
-            dispatchingQueuedMessageId,
-          )
-        : [],
-    [dispatchingQueuedMessageId, selectedThreadDetail, selectedThreadQueuedMessages],
+    () => (selectedThreadDetail ? buildThreadFeed(selectedThreadDetail) : []),
+    [selectedThreadDetail],
   );
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
@@ -125,7 +115,6 @@ export function useThreadComposerState() {
     };
   }, [selectedThreadDetail, selectedThreadShell]);
 
-  const queuedSendStartedAt = selectedThreadQueuedMessages[0]?.createdAt ?? null;
   const activeWorkStartedAt = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
     if (!selectedThread) {
@@ -135,14 +124,9 @@ export function useThreadComposerState() {
     return deriveActiveWorkStartedAt(
       selectedThread.latestTurn,
       selectedThreadSessionActivity,
-      queuedSendStartedAt,
+      null,
     );
-  }, [
-    queuedSendStartedAt,
-    selectedThreadDetail,
-    selectedThreadSessionActivity,
-    selectedThreadShell,
-  ]);
+  }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
 
   const activeThreadBusy =
     !!selectedThread &&
