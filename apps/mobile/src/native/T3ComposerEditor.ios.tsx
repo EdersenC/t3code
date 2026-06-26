@@ -174,6 +174,10 @@ export function ComposerEditor({
   });
   useEffect(() => {
     previousRenderedEventSequenceRef.current = nativeEventSequence;
+    const snapshots = nativeEventSnapshotsRef.current;
+    if (snapshots.length > 50) {
+      nativeEventSnapshotsRef.current = snapshots.slice(-50);
+    }
   }, [nativeEventSequence]);
   const acceptNativeEvent = useCallback(
     (eventCount: number, value: string, nextSelection: ComposerEditorSelection) => {
