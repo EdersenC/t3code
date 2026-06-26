@@ -13,13 +13,13 @@ import {
   PreviewAutomationTargetNotEditableError,
   PreviewAutomationTimeoutError,
   PreviewAutomationUnsupportedClientError,
+  PreviewTabId,
   type PreviewAutomationError,
   type PreviewAutomationOperation,
   type PreviewAutomationHost,
   type PreviewAutomationHostFocus,
   type PreviewAutomationResponse,
   type PreviewAutomationStreamEvent,
-  type PreviewTabId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
@@ -29,6 +29,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
@@ -79,6 +80,7 @@ interface HostAssignment {
   readonly connectionId: ClientConnection["connectionId"];
   readonly queue: ClientConnection["queue"];
   readonly expiresAt: number;
+  readonly tabId?: PreviewTabId;
 }
 
 interface PreviewAutomationRequestErrorContext {
@@ -143,6 +145,14 @@ const selectorDiagnosticsFromInput = (
 
 const hostAssignmentKey = (scope: McpInvocationContext.McpInvocationScope): string =>
   `${scope.environmentId}\u0000${scope.providerSessionId}`;
+
+const isPreviewTabId = Schema.is(PreviewTabId);
+
+const readResultTabId = (result: unknown): PreviewTabId | null | undefined => {
+  if (typeof result !== "object" || result === null || !("tabId" in result)) return undefined;
+  const tabId = result.tabId;
+  return tabId === null || isPreviewTabId(tabId) ? tabId : undefined;
+};
 
 const supportsOperation = (
   connection: ClientConnection,
@@ -459,10 +469,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         connectionId: connection.connectionId,
         queue: connection.queue,
         expiresAt: input.scope.expiresAt,
+        ...(assigned?.tabId === undefined ? {} : { tabId: assigned.tabId }),
       });
 
       const requestId = `preview-${current.requestSequence}`;
-      const tabId = input.tabId;
+      const tabId = input.tabId ?? assigned?.tabId;
       const selectorDiagnostics = selectorDiagnosticsFromInput(input.input);
       const context: PreviewAutomationRequestErrorContext = {
         operation: input.operation,
@@ -526,7 +537,30 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         onSome: (value) => Effect.succeed(value as A),
       });
     });
-    return yield* awaitResponse().pipe(Effect.ensuring(removePending));
+    const result = yield* awaitResponse().pipe(Effect.ensuring(removePending));
+    const resultTabId = readResultTabId(result);
+    if (resultTabId !== undefined) {
+      const assignmentKey = hostAssignmentKey(input.scope);
+      yield* SynchronizedRef.update(state, (current) => {
+        const assignment = current.assignments.get(assignmentKey);
+        if (
+          !assignment ||
+          assignment.connectionId !== connection.connectionId ||
+          assignment.queue !== connection.queue
+        ) {
+          return current;
+        }
+        const assignments = new Map(current.assignments);
+        if (resultTabId === null) {
+          const { tabId: _tabId, ...withoutTabId } = assignment;
+          assignments.set(assignmentKey, withoutTabId);
+        } else {
+          assignments.set(assignmentKey, { ...assignment, tabId: resultTabId });
+        }
+        return { ...current, assignments };
+      });
+    }
+    return result;
   });
 
   return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });

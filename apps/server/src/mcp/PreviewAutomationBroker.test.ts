@@ -84,6 +84,38 @@ it.effect("atomically registers a connected host and correlates its response", (
   ),
 );
 
+it.effect("pins follow-up operations to the tab returned by open", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const openedTabId = PreviewTabId.make("tab-opened-by-agent");
+      const routedRequests: RoutedRequest[] = [];
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) => {
+        routedRequests.push(request);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result:
+            request.operation === "open"
+              ? { available: true, tabId: openedTabId }
+              : { url: "http://localhost:3200" },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      yield* broker.invoke({ scope, operation: "open", input: { reuseExistingTab: false } });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests).toHaveLength(2);
+      expect(routedRequests[0]?.tabId).toBeUndefined();
+      expect(routedRequests[1]?.tabId).toBe(openedTabId);
+    }),
+  ),
+);
+
 it.effect("announces a live replacement stream before delivering requests", () =>
   Effect.scoped(
     Effect.gen(function* () {

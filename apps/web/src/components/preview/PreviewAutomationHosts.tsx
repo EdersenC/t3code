@@ -56,6 +56,7 @@ import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationR
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 import {
   needsPreviewAutomationSessionSync,
+  resolvePreviewAutomationOpenTab,
   resolvePreviewAutomationTarget,
 } from "./previewAutomationTarget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
@@ -332,8 +333,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             return await currentStatus(threadRef, tabId);
           case "open": {
             const input = request.input as PreviewAutomationOpenInput;
-            let activeTabId =
-              (input.reuseExistingTab ?? true) ? (state.snapshot?.tabId ?? null) : null;
+            let activeTabId = resolvePreviewAutomationOpenTab(
+              state,
+              request.tabId,
+              input.reuseExistingTab ?? true,
+            );
             let activeSnapshot = activeTabId
               ? (state.sessions[activeTabId] ?? state.snapshot ?? undefined)
               : undefined;
