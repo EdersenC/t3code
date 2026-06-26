@@ -49,20 +49,18 @@ export function resolveComposerControlledEventCount(
   return mostRecentEventCount;
 }
 
-export function resolveComposerControlledSelection(
+export function isComposerNativeEcho(
   value: string,
   selection: ComposerEditorSelection | null,
-  snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
-): ComposerEditorSelection | null {
-  if (selection === null || snapshots.some((snapshot) => snapshot.value === value)) {
-    return null;
-  }
-  return selection;
-}
-
-export function isComposerNativeValue(
-  value: string,
+  eventCount: number,
   snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
 ): boolean {
-  return snapshots.some((snapshot) => snapshot.value === value);
+  return snapshots.some(
+    (snapshot) =>
+      snapshot.eventCount === eventCount &&
+      snapshot.value === value &&
+      (selection === null ||
+        (snapshot.selection?.start === selection.start &&
+          snapshot.selection.end === selection.end)),
+  );
 }

@@ -18,9 +18,8 @@ import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useThemeColor } from "../lib/useThemeColor";
 import {
   acknowledgeComposerNativeEvent,
-  isComposerNativeValue,
+  isComposerNativeEcho,
   resolveComposerControlledEventCount,
-  resolveComposerControlledSelection,
   type ComposerNativeEventSnapshot,
 } from "./composerEditorRevision";
 import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
@@ -99,6 +98,8 @@ export function ComposerEditor({
   const nativeRef = useRef<NativeComposerEditorRef>(null);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
+  const [nativeEventSequence, setNativeEventSequence] = useState(0);
+  const previousRenderedEventSequenceRef = useRef(0);
   const nativeEventSnapshotsRef = useRef<ComposerNativeEventSnapshot[]>([
     { eventCount: 0, value: props.value, selection: selection ?? null },
   ]);
@@ -147,33 +148,37 @@ export function ComposerEditor({
       })),
     );
   }, [props.value, skillLabels]);
-  const controlledEventCount = resolveComposerControlledEventCount(
-    props.value,
-    selection ?? null,
-    Math.max(mostRecentEventCount, mostRecentEventCountRef.current),
-    nativeEventSnapshotsRef.current,
-  );
-  const controlledSelection = resolveComposerControlledSelection(
-    props.value,
-    selection ?? null,
-    nativeEventSnapshotsRef.current,
-  );
-  const isNativeValue = isComposerNativeValue(props.value, nativeEventSnapshotsRef.current);
+  const includesNativeEvent = nativeEventSequence !== previousRenderedEventSequenceRef.current;
+  const controlledEventCount = includesNativeEvent
+    ? resolveComposerControlledEventCount(
+        props.value,
+        selection ?? null,
+        mostRecentEventCount,
+        nativeEventSnapshotsRef.current,
+      )
+    : mostRecentEventCount;
+  const isNativeEcho =
+    includesNativeEvent &&
+    isComposerNativeEcho(
+      props.value,
+      selection ?? null,
+      controlledEventCount,
+      nativeEventSnapshotsRef.current,
+    );
   const controlledDocumentJson = JSON.stringify({
     value: props.value,
-    selection: controlledSelection,
+    selection: isNativeEcho ? null : (selection ?? null),
     tokensJson,
     mostRecentEventCount: controlledEventCount,
-    isNativeValue,
+    isNativeEcho,
   });
   useEffect(() => {
-    nativeEventSnapshotsRef.current = [
-      { eventCount: controlledEventCount, value: props.value, selection: selection ?? null },
-      ...nativeEventSnapshotsRef.current.filter(
-        (snapshot) => snapshot.eventCount > controlledEventCount,
-      ),
-    ];
-  }, [controlledEventCount, props.value, selection]);
+    previousRenderedEventSequenceRef.current = nativeEventSequence;
+    const snapshots = nativeEventSnapshotsRef.current;
+    if (snapshots.length > 50) {
+      nativeEventSnapshotsRef.current = snapshots.slice(-50);
+    }
+  }, [nativeEventSequence]);
   const acceptNativeEvent = useCallback(
     (eventCount: number, value: string, nextSelection: ComposerEditorSelection) => {
       const acknowledgedEventCount = acknowledgeComposerNativeEvent(
@@ -243,6 +248,7 @@ export function ComposerEditor({
         onChangeText(event.nativeEvent.value);
         onSelectionChange?.(event.nativeEvent.selection);
         setMostRecentEventCount(acknowledgedEventCount);
+        setNativeEventSequence((sequence) => sequence + 1);
       }}
       onComposerSelectionChange={(event) => {
         const acknowledgedEventCount = acceptNativeEvent(
@@ -253,6 +259,7 @@ export function ComposerEditor({
         if (acknowledgedEventCount === false) return;
         onSelectionChange?.(event.nativeEvent.selection);
         setMostRecentEventCount(acknowledgedEventCount);
+        setNativeEventSequence((sequence) => sequence + 1);
       }}
       onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
       onComposerFocus={onFocus}

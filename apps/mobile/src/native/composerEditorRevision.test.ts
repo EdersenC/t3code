@@ -2,9 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   acknowledgeComposerNativeEvent,
-  isComposerNativeValue,
+  isComposerNativeEcho,
   resolveComposerControlledEventCount,
-  resolveComposerControlledSelection,
 } from "./composerEditorRevision";
 
 describe("acknowledgeComposerNativeEvent", () => {
@@ -26,29 +25,21 @@ describe("acknowledgeComposerNativeEvent", () => {
   });
 });
 
-describe("resolveComposerControlledSelection", () => {
+describe("isComposerNativeEcho", () => {
   const snapshots = [{ eventCount: 3, value: "native", selection: { start: 6, end: 6 } }];
 
-  it("does not replay selection for text that originated from native input", () => {
-    expect(
-      resolveComposerControlledSelection("native", { start: 2, end: 2 }, snapshots),
-    ).toBeNull();
+  it("matches the exact native text revision and selection", () => {
+    expect(isComposerNativeEcho("native", { start: 6, end: 6 }, 3, snapshots)).toBe(true);
   });
 
-  it("preserves selection for a parent-driven text replacement", () => {
-    expect(resolveComposerControlledSelection("/plan ", { start: 6, end: 6 }, snapshots)).toEqual({
-      start: 6,
-      end: 6,
-    });
+  it("does not claim parent-driven selection or repeated-text updates", () => {
+    expect(isComposerNativeEcho("native", { start: 2, end: 2 }, 3, snapshots)).toBe(false);
+    expect(isComposerNativeEcho("native", { start: 6, end: 6 }, 4, snapshots)).toBe(false);
+    expect(isComposerNativeEcho("parent edit", { start: 6, end: 6 }, 3, snapshots)).toBe(false);
   });
-});
 
-describe("isComposerNativeValue", () => {
-  const snapshots = [{ eventCount: 3, value: "native", selection: { start: 6, end: 6 } }];
-
-  it("identifies values emitted by the native editor", () => {
-    expect(isComposerNativeValue("native", snapshots)).toBe(true);
-    expect(isComposerNativeValue("parent edit", snapshots)).toBe(false);
+  it("matches value and revision when selection is uncontrolled", () => {
+    expect(isComposerNativeEcho("native", null, 3, snapshots)).toBe(true);
   });
 });
 
