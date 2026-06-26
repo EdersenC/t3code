@@ -556,6 +556,9 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       ) {
         return current;
       }
+      if (resultTabId === undefined) {
+        return current;
+      }
       const assignments = new Map(current.assignments);
       if (resultTabId === null) {
         const { tabId: _tabId, ...withoutTabId } = assignment;
@@ -563,7 +566,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       } else {
         assignments.set(assignmentKey, {
           ...assignment,
-          ...(resultTabId === undefined ? {} : { tabId: resultTabId }),
+          tabId: resultTabId,
           tabSequence: requestSequence,
         });
       }
