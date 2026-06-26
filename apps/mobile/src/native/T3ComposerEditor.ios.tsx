@@ -97,6 +97,7 @@ export function ComposerEditor({
   const nativeRef = useRef<NativeComposerEditorRef>(null);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
+  const prevMostRecentEventCountRef = useRef(0);
   const nativeEventSnapshotsRef = useRef<ComposerNativeEventSnapshot[]>([
     { eventCount: 0, value: props.value },
   ]);
@@ -145,11 +146,14 @@ export function ComposerEditor({
       })),
     );
   }, [props.value, skillLabels]);
-  const controlledEventCount = resolveComposerControlledEventCount(
-    props.value,
-    Math.max(mostRecentEventCount, mostRecentEventCountRef.current),
-    nativeEventSnapshotsRef.current,
-  );
+  const includesNativeEvent = mostRecentEventCount !== prevMostRecentEventCountRef.current;
+  const controlledEventCount = includesNativeEvent
+    ? resolveComposerControlledEventCount(
+        props.value,
+        mostRecentEventCount,
+        nativeEventSnapshotsRef.current,
+      )
+    : mostRecentEventCount;
   const controlledDocumentJson = JSON.stringify({
     value: props.value,
     selection: selection ?? null,
@@ -157,12 +161,14 @@ export function ComposerEditor({
     mostRecentEventCount: controlledEventCount,
   });
   useEffect(() => {
-    nativeEventSnapshotsRef.current = [
-      { eventCount: controlledEventCount, value: props.value },
-      ...nativeEventSnapshotsRef.current.filter(
-        (snapshot) => snapshot.eventCount > controlledEventCount,
-      ),
-    ];
+    prevMostRecentEventCountRef.current = mostRecentEventCount;
+  }, [mostRecentEventCount]);
+  useEffect(() => {
+    const maxSnapshots = 50;
+    const snapshots = nativeEventSnapshotsRef.current;
+    if (snapshots.length > maxSnapshots) {
+      nativeEventSnapshotsRef.current = snapshots.slice(-maxSnapshots);
+    }
   }, [controlledEventCount, props.value]);
   const acceptNativeEvent = useCallback((eventCount: number, value: string) => {
     const acknowledgedEventCount = acknowledgeComposerNativeEvent(
