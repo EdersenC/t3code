@@ -149,14 +149,12 @@ export function ComposerEditor({
     );
   }, [props.value, skillLabels]);
   const includesNativeEvent = nativeEventSequence !== previousRenderedEventSequenceRef.current;
-  const controlledEventCount = includesNativeEvent
-    ? resolveComposerControlledEventCount(
-        props.value,
-        selection ?? null,
-        mostRecentEventCount,
-        nativeEventSnapshotsRef.current,
-      )
-    : mostRecentEventCount;
+  const controlledEventCount = resolveComposerControlledEventCount(
+    props.value,
+    selection ?? null,
+    mostRecentEventCount,
+    nativeEventSnapshotsRef.current,
+  );
   const isNativeEcho =
     includesNativeEvent &&
     isComposerNativeEcho(
