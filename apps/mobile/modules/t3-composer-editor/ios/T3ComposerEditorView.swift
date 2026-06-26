@@ -288,6 +288,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
   private var didAutoFocus = false
   private var isApplyingControlledValue = false
   private var nativeEventCount = 0
+  private var lastReceivedEventCount = 0
   private var lastContentSize = CGSize.zero
   private var iconImages: [String: UIImage] = [:]
   private var pendingIconUris = Set<String>()
@@ -358,8 +359,11 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
   }
 
   func setControlledDocumentJson(_ documentJson: String) {
-    guard let document = decode(ComposerControlledDocumentPayload.self, from: documentJson),
-          document.mostRecentEventCount >= nativeEventCount else {
+    guard let document = decode(ComposerControlledDocumentPayload.self, from: documentJson) else {
+      return
+    }
+    lastReceivedEventCount = document.mostRecentEventCount
+    guard document.mostRecentEventCount >= nativeEventCount else {
       return
     }
     value = document.value
@@ -378,6 +382,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     self.tokensJson = tokensJson
     tokens = decode([ComposerTokenPayload].self, from: tokensJson) ?? []
     tokensNeedRebuild = true
+    guard lastReceivedEventCount >= nativeEventCount else {
+      return
+    }
     applyControlledDocument(force: true)
     if tokensMatchCurrentValue() {
       tokensNeedRebuild = false
@@ -720,7 +727,6 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
 
   private func emitSelection() {
     let selection = sourceSelection()
-    nativeEventCount += 1
     onComposerSelectionChange([
       "selection": ["start": selection.start, "end": selection.end],
       "eventCount": nativeEventCount,

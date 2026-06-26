@@ -135,8 +135,9 @@ export function ComposerEditor({
       JSON.stringify({
         value: props.value,
         selection: selection ?? null,
-        mostRecentEventCount,
+        mostRecentEventCount: mostRecentEventCountRef.current,
       }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [mostRecentEventCount, props.value, selection],
   );
   const acceptNativeEvent = useCallback((eventCount: number) => {
