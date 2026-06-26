@@ -82,9 +82,22 @@ const activeBrowserRecordingTabIdAtom = Atom.make<string | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("preview:active-browser-recording-tab"),
 );
+const browserRecordingSurfaceTabIdAtom = Atom.make<string | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("preview:browser-recording-surface-tab"),
+);
 
 export function useActiveBrowserRecordingTabId(): string | null {
   return useAtomValue(activeBrowserRecordingTabIdAtom);
+}
+
+/**
+ * The tab whose guest must remain paintable for Chromium screencast frames.
+ * This becomes active one paint before the public recording state so a
+ * background webview is visible to Chromium before Page.startScreencast.
+ */
+export function useBrowserRecordingSurfaceTabId(): string | null {
+  return useAtomValue(browserRecordingSurfaceTabIdAtom);
 }
 
 let active: ActiveRecording | null = null;
@@ -123,12 +136,31 @@ const stopMediaRecorder = async (recorder: MediaRecorder): Promise<void> => {
   await stopped;
 };
 
+const waitForBrowserRecordingSurfacePaint = (): Promise<void> =>
+  new Promise((resolve) => {
+    let settled = false;
+    let secondFrameId: number | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      window.cancelAnimationFrame(firstFrameId);
+      if (secondFrameId !== null) window.cancelAnimationFrame(secondFrameId);
+      resolve();
+    };
+    const timeoutId = window.setTimeout(finish, 100);
+    const firstFrameId = window.requestAnimationFrame(() => {
+      secondFrameId = window.requestAnimationFrame(finish);
+    });
+  });
+
 const clearActiveRecording = (recording: ActiveRecording): void => {
   if (active !== recording) return;
   active = null;
   unsubscribeFrames?.();
   unsubscribeFrames = null;
   appAtomRegistry.set(activeBrowserRecordingTabIdAtom, null);
+  appAtomRegistry.set(browserRecordingSurfaceTabIdAtom, null);
 };
 
 export async function startBrowserRecording(tabId: string): Promise<string> {
@@ -196,6 +228,8 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
       cause,
     });
   }
+  appAtomRegistry.set(browserRecordingSurfaceTabIdAtom, tabId);
+  await waitForBrowserRecordingSurfacePaint();
   try {
     await bridge.recording.startScreencast(tabId);
   } catch (cause) {

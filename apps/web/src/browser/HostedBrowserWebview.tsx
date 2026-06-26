@@ -8,7 +8,7 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
 
-import { useActiveBrowserRecordingTabId } from "./browserRecording";
+import { useBrowserRecordingSurfaceTabId } from "./browserRecording";
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { browserViewportSettingKey } from "./browserViewportLayout";
 import { reconcileLockedAspectRatio } from "./browserDeviceToolbarState";
@@ -56,7 +56,7 @@ export function HostedBrowserWebview(props: {
       };
     }),
   );
-  const recording = useActiveBrowserRecordingTabId() === tabId;
+  const recording = useBrowserRecordingSurfaceTabId() === tabId;
 
   usePreviewBridge({ threadRef, tabId });
 
@@ -185,8 +185,8 @@ export function HostedBrowserWebview(props: {
           // so Page.startScreencast continues to emit frames. Every other
           // inactive guest is both hidden and moved offscreen; z-index alone
           // is not a reliable visibility boundary for Electron webviews.
-          left: recording ? 0 : -100_000,
-          top: recording ? 0 : -100_000,
+          left: -100_000,
+          top: -100_000,
           width: hiddenSize.width,
           height: hiddenSize.height,
           zIndex: recording ? 0 : -1,
