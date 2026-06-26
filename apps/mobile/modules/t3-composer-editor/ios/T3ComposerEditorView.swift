@@ -488,7 +488,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
   private func applyControlledDocument(force: Bool = false) {
     let currentSource = textView.serializedText()
     guard force || currentSource != value || !documentMatchesExpectedTokens() else {
-      requestedSelection = nil
+      applyRequestedSelection()
       updatePlaceholderVisibility()
       return
     }

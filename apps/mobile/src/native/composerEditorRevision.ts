@@ -54,7 +54,9 @@ export function resolveComposerControlledSelection(
   selection: ComposerEditorSelection | null,
   snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
 ): ComposerEditorSelection | null {
-  if (selection === null || snapshots.some((snapshot) => snapshot.value === value)) {
+  if (selection === null) return null;
+  const lastSnapshot = snapshots[snapshots.length - 1];
+  if (lastSnapshot !== undefined && lastSnapshot.value === value) {
     return null;
   }
   return selection;
@@ -64,5 +66,6 @@ export function isComposerNativeValue(
   value: string,
   snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
 ): boolean {
-  return snapshots.some((snapshot) => snapshot.value === value);
+  const lastSnapshot = snapshots[snapshots.length - 1];
+  return lastSnapshot !== undefined && lastSnapshot.value === value;
 }
