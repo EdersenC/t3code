@@ -67,9 +67,11 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
+const opencodeInstanceId = ProviderInstanceId.make("opencode");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -271,10 +273,12 @@ function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
+  const opencode = makeFakeCodexAdapter(OPENCODE_DRIVER);
   const registry = makeAdapterRegistryMock({
     [ProviderDriverKind.make("codex")]: codex.adapter,
     [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
     [ProviderDriverKind.make("cursor")]: cursor.adapter,
+    [ProviderDriverKind.make("opencode")]: opencode.adapter,
   });
 
   const providerAdapterLayer = Layer.succeed(
@@ -311,6 +315,7 @@ function makeProviderServiceLayer() {
     codex,
     claude,
     cursor,
+    opencode,
     layer,
   };
 }
@@ -924,6 +929,64 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.threadId, session.threadId);
       }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("recovers OpenCode sendTurn with the persisted session resume cursor", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("thread-opencode-recovered-send");
+      const resumeCursor = {
+        schemaVersion: 1,
+        sessionId: "ses_opencode_existing",
+      };
+
+      yield* directory.upsert({
+        provider: OPENCODE_DRIVER,
+        providerInstanceId: opencodeInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+        status: "stopped",
+        resumeCursor,
+        runtimePayload: {
+          cwd: "/tmp/project",
+        },
+      });
+
+      routing.opencode.startSession.mockClear();
+      routing.opencode.sendTurn.mockClear();
+
+      yield* provider.sendTurn({
+        threadId,
+        input: "resume opencode",
+        attachments: [],
+      });
+
+      assert.equal(routing.opencode.startSession.mock.calls.length, 1);
+      const resumedStartInput = routing.opencode.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+      if (resumedStartInput && typeof resumedStartInput === "object") {
+        const startPayload = resumedStartInput as {
+          provider?: string;
+          cwd?: string;
+          resumeCursor?: unknown;
+          threadId?: string;
+        };
+        assert.equal(startPayload.provider, "opencode");
+        assert.equal(startPayload.cwd, "/tmp/project");
+        assert.deepEqual(startPayload.resumeCursor, resumeCursor);
+        assert.equal(startPayload.threadId, threadId);
+      }
+      assert.equal(routing.opencode.sendTurn.mock.calls.length, 1);
+
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.deepEqual(binding.value.resumeCursor, resumeCursor);
+      }
+
+      yield* provider.stopSession({ threadId });
     }),
   );
 
