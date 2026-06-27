@@ -89,21 +89,6 @@ import {
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-const THEME_OPTIONS = [
-  {
-    value: "system",
-    label: "System",
-  },
-  {
-    value: "light",
-    label: "Light",
-  },
-  {
-    value: "dark",
-    label: "Dark",
-  },
-] as const;
-
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
   "12-hour": "12-hour",
@@ -385,6 +370,35 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(settings.uiAccentColor !== DEFAULT_UNIFIED_SETTINGS.uiAccentColor
+        ? ["Accent palette"]
+        : []),
+      ...(settings.customUiAccentColor !== DEFAULT_UNIFIED_SETTINGS.customUiAccentColor
+        ? ["Accent color"]
+        : []),
+      ...(settings.uiSecondaryColor !== DEFAULT_UNIFIED_SETTINGS.uiSecondaryColor
+        ? ["Secondary palette"]
+        : []),
+      ...(settings.customUiSecondaryColor !== DEFAULT_UNIFIED_SETTINGS.customUiSecondaryColor
+        ? ["Secondary color"]
+        : []),
+      ...(settings.uiFontFamily !== DEFAULT_UNIFIED_SETTINGS.uiFontFamily
+        ? ["Interface font"]
+        : []),
+      ...(settings.uiMonoFontFamily !== DEFAULT_UNIFIED_SETTINGS.uiMonoFontFamily
+        ? ["Monospace font"]
+        : []),
+      ...(settings.uiFontSize !== DEFAULT_UNIFIED_SETTINGS.uiFontSize ? ["Interface size"] : []),
+      ...(settings.uiCodeFontSize !== DEFAULT_UNIFIED_SETTINGS.uiCodeFontSize ? ["Code size"] : []),
+      ...(settings.interfaceDensity !== DEFAULT_UNIFIED_SETTINGS.interfaceDensity
+        ? ["Interface density"]
+        : []),
+      ...(settings.interfaceContrast !== DEFAULT_UNIFIED_SETTINGS.interfaceContrast
+        ? ["Interface contrast"]
+        : []),
+      ...(settings.backgroundTexture !== DEFAULT_UNIFIED_SETTINGS.backgroundTexture
+        ? ["Background texture"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -429,13 +443,24 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.backgroundTexture,
+      settings.customUiAccentColor,
+      settings.customUiSecondaryColor,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
+      settings.interfaceContrast,
+      settings.interfaceDensity,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
+      settings.uiAccentColor,
+      settings.uiCodeFontSize,
+      settings.uiFontFamily,
+      settings.uiFontSize,
+      settings.uiMonoFontFamily,
+      settings.uiSecondaryColor,
       settings.wordWrap,
       theme,
     ],
@@ -453,6 +478,17 @@ export function useSettingsRestore(onRestored?: () => void) {
 
     setTheme("system");
     updateSettings({
+      uiAccentColor: DEFAULT_UNIFIED_SETTINGS.uiAccentColor,
+      customUiAccentColor: DEFAULT_UNIFIED_SETTINGS.customUiAccentColor,
+      uiSecondaryColor: DEFAULT_UNIFIED_SETTINGS.uiSecondaryColor,
+      customUiSecondaryColor: DEFAULT_UNIFIED_SETTINGS.customUiSecondaryColor,
+      uiFontFamily: DEFAULT_UNIFIED_SETTINGS.uiFontFamily,
+      uiMonoFontFamily: DEFAULT_UNIFIED_SETTINGS.uiMonoFontFamily,
+      uiFontSize: DEFAULT_UNIFIED_SETTINGS.uiFontSize,
+      uiCodeFontSize: DEFAULT_UNIFIED_SETTINGS.uiCodeFontSize,
+      interfaceDensity: DEFAULT_UNIFIED_SETTINGS.interfaceDensity,
+      interfaceContrast: DEFAULT_UNIFIED_SETTINGS.interfaceContrast,
+      backgroundTexture: DEFAULT_UNIFIED_SETTINGS.backgroundTexture,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -477,7 +513,6 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 export function GeneralSettingsPanel() {
-  const { theme, setTheme } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const observability = useAtomValue(primaryServerObservabilityAtom);
@@ -516,39 +551,6 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
-        <SettingsRow
-          title="Theme"
-          description="Choose how T3 Code looks across the app."
-          resetAction={
-            theme !== "system" ? (
-              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
-            ) : null
-          }
-          control={
-            <Select
-              value={theme}
-              onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  setTheme(value);
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
-                <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
         <SettingsRow
           title="Time format"
           description="System default follows your browser or OS clock preference."

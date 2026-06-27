@@ -34,6 +34,7 @@ import {
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { usePersonalizationSync } from "../personalization";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -100,6 +101,7 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <PersonalizationSync />
         <Outlet />
       </>
     );
@@ -109,6 +111,7 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <PersonalizationSync />
         <Outlet />
       </>
     );
@@ -126,6 +129,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <DocumentTitleSync />
+        <PersonalizationSync />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
         <SshPasswordPromptDialog />
@@ -137,6 +141,11 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function PersonalizationSync() {
+  usePersonalizationSync();
+  return null;
 }
 
 function DocumentTitleSync() {
