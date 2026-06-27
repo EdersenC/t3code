@@ -66,6 +66,11 @@ interface OpenCodeTurnInputSnapshot {
   readonly modelSelection?: ModelSelection | undefined;
 }
 
+interface OpenCodeResumeCursor {
+  readonly schemaVersion: 1;
+  readonly sessionId: string;
+}
+
 type OpenCodeSubscribedEvent =
   Awaited<ReturnType<OpencodeClient["event"]["subscribe"]>> extends {
     readonly stream: AsyncIterable<infer TEvent>;
@@ -142,6 +147,22 @@ export interface OpenCodeAdapterLiveOptions {
     input: OpenCodeTokenUsageEstimateInput,
   ) => Effect.Effect<ThreadTokenUsageSnapshot | undefined>;
   readonly splitInlineThinking?: boolean | undefined;
+}
+
+function readOpenCodeResumeCursor(raw: unknown): OpenCodeResumeCursor | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const cursor = raw as { readonly schemaVersion?: unknown; readonly sessionId?: unknown };
+  if (cursor.schemaVersion !== 1 || typeof cursor.sessionId !== "string") {
+    return undefined;
+  }
+  const sessionId = cursor.sessionId.trim();
+  return sessionId.length > 0 ? { schemaVersion: 1, sessionId } : undefined;
+}
+
+function makeOpenCodeResumeCursor(sessionId: string): OpenCodeResumeCursor {
+  return { schemaVersion: 1, sessionId };
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -1284,6 +1305,18 @@ export function makeOpenCodeAdapter(
         const serverUrl = openCodeSettings.serverUrl;
         const serverPassword = openCodeSettings.serverPassword;
         const directory = input.cwd ?? serverConfig.cwd;
+        const resumeCursor =
+          input.resumeCursor !== undefined
+            ? readOpenCodeResumeCursor(input.resumeCursor)
+            : undefined;
+        if (input.resumeCursor !== undefined && resumeCursor === undefined) {
+          return yield* new ProviderAdapterValidationError({
+            provider,
+            operation: "startSession",
+            issue:
+              "OpenCode resume cursor must be an object with schemaVersion: 1 and a non-empty sessionId.",
+          });
+        }
         const existing = sessions.get(input.threadId);
         if (existing) {
           yield* stopOpenCodeContext(existing);
@@ -1327,16 +1360,21 @@ export function makeOpenCodeAdapter(
                   }),
                 );
               }
-              const openCodeSession = yield* runOpenCodeSdk("session.create", () =>
-                client.session.create({
-                  title: `T3 Code ${input.threadId}`,
-                  permission: buildOpenCodePermissionRules(input.runtimeMode),
-                }),
-              );
+              const openCodeSession = resumeCursor
+                ? yield* runOpenCodeSdk("session.get", () =>
+                    client.session.get({ sessionID: resumeCursor.sessionId }),
+                  )
+                : yield* runOpenCodeSdk("session.create", () =>
+                    client.session.create({
+                      title: `T3 Code ${input.threadId}`,
+                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    }),
+                  );
               if (!openCodeSession.data) {
+                const operation = resumeCursor ? "session.get" : "session.create";
                 return yield* new OpenCodeRuntimeError({
-                  operation: "session.create",
-                  detail: "OpenCode session.create returned no session payload.",
+                  operation,
+                  detail: `OpenCode ${operation} returned no session payload.`,
                 });
               }
               return {
@@ -1395,6 +1433,7 @@ export function makeOpenCodeAdapter(
           threadId: input.threadId,
           createdAt,
           updatedAt: createdAt,
+          resumeCursor: makeOpenCodeResumeCursor(started.openCodeSession.id),
         };
 
         const context: OpenCodeSessionContext = {
