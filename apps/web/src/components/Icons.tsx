@@ -211,6 +211,39 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const OllamaIcon: Icon = ({ className, ...props }) => {
+  const maskId = `${useId().replaceAll(":", "")}-ollama`;
+
+  return (
+    <svg
+      {...props}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={cn("text-neutral-950 dark:text-neutral-50", className)}
+    >
+      <defs>
+        <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+          <rect width="24" height="24" fill="white" />
+          <circle cx="9.35" cy="12.05" r=".82" fill="black" />
+          <circle cx="14.65" cy="12.05" r=".82" fill="black" />
+          <path
+            d="M9.55 16.1c1.34.92 3.56.92 4.9 0"
+            stroke="black"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+          />
+          <path d="M12 13.45v1.3" stroke="black" strokeWidth="1" strokeLinecap="round" />
+        </mask>
+      </defs>
+      <g fill="currentColor" mask={`url(#${maskId})`}>
+        <path d="M8.1 7.2 7.1 4.05c-.2-.62.5-1.14 1.04-.78l3.05 2.05c-1.18.12-2.22.46-3.09 1.88Z" />
+        <path d="m15.9 7.2 1-3.15c.2-.62-.5-1.14-1.04-.78l-3.05 2.05c1.18.12 2.22.46 3.09 1.88Z" />
+        <path d="M5.2 12.1c0-4.18 2.85-6.75 6.8-6.75s6.8 2.57 6.8 6.75v2.25a5.65 5.65 0 0 1-5.65 5.65h-2.3a5.65 5.65 0 0 1-5.65-5.65V12.1Z" />
+      </g>
+    </svg>
+  );
+};
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}

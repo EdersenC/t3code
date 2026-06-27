@@ -33,6 +33,8 @@ import {
   appendOpenCodeAssistantTextDelta,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
+  splitInlineThinkingText,
+  type OpenCodeAdapterLiveOptions,
 } from "./OpenCodeAdapter.ts";
 
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
@@ -199,26 +201,26 @@ const openCodeAdapterTestSettings = Schema.decodeSync(OpenCodeSettings)({
   serverPassword: "secret-password",
 });
 
-const OpenCodeAdapterTestLayer = Layer.effect(
-  OpenCodeAdapter,
-  makeOpenCodeAdapter(openCodeAdapterTestSettings),
-).pipe(
-  Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-  Layer.provideMerge(
-    ServerSettingsService.layerTest({
-      providers: {
-        opencode: {
-          binaryPath: "fake-opencode",
-          serverUrl: "http://127.0.0.1:9999",
-          serverPassword: "secret-password",
+const makeOpenCodeAdapterTestLayer = (options: OpenCodeAdapterLiveOptions = {}) =>
+  Layer.effect(OpenCodeAdapter, makeOpenCodeAdapter(openCodeAdapterTestSettings, options)).pipe(
+    Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(
+      ServerSettingsService.layerTest({
+        providers: {
+          opencode: {
+            binaryPath: "fake-opencode",
+            serverUrl: "http://127.0.0.1:9999",
+            serverPassword: "secret-password",
+          },
         },
-      },
-    }),
-  ),
-  Layer.provideMerge(providerSessionDirectoryTestLayer),
-  Layer.provideMerge(NodeServices.layer),
-);
+      }),
+    ),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+const OpenCodeAdapterTestLayer = makeOpenCodeAdapterTestLayer();
 
 beforeEach(() => {
   runtimeMock.reset();
@@ -649,6 +651,84 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         ["Hello", "lo world", ""],
       );
       NodeAssert.equal(secondUpdate.latestText, "Hellolo world");
+    }),
+  );
+
+  it.effect("splits inline think tags into reasoning and assistant text", () =>
+    Effect.sync(() => {
+      NodeAssert.deepEqual(splitInlineThinkingText("<think>hidden</think>answer"), {
+        assistantText: "answer",
+        reasoningText: "hidden",
+        hasInlineThinking: true,
+      });
+    }),
+  );
+
+  it.effect("streams inline-thinking assistant text as reasoning_text + assistant_text", () =>
+    Effect.gen(function* () {
+      const adapterLayer = makeOpenCodeAdapterTestLayer({ splitInlineThinking: true });
+      const threadId = asThreadId("thread-inline-thinking-stream");
+      const events = Array.from(
+        yield* Effect.gen(function* () {
+          const adapter = yield* OpenCodeAdapter;
+          runtimeMock.state.subscribedEvents = [
+            {
+              type: "message.updated",
+              properties: {
+                sessionID: "http://127.0.0.1:9999/session",
+                info: {
+                  id: "msg-inline-thinking",
+                  role: "assistant",
+                },
+              },
+            },
+            {
+              type: "message.part.updated",
+              properties: {
+                sessionID: "http://127.0.0.1:9999/session",
+                part: {
+                  id: "part-inline-thinking",
+                  messageID: "msg-inline-thinking",
+                  type: "text",
+                  text: "<think>hidden</think>answer",
+                  time: { start: 1, end: 2 },
+                },
+                time: 2,
+              },
+            },
+          ];
+
+          const streamFiber = yield* adapter.streamEvents.pipe(
+            Stream.filter((event) => event.threadId === threadId),
+            Stream.take(5),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+
+          yield* adapter.startSession({
+            provider: ProviderDriverKind.make("opencode"),
+            threadId,
+            runtimeMode: "full-access",
+          });
+
+          return yield* Fiber.join(streamFiber).pipe(Effect.timeout("1 second"));
+        }).pipe(Effect.provide(adapterLayer)),
+      );
+
+      const deltas = events.filter((event) => event.type === "content.delta");
+      NodeAssert.deepEqual(
+        deltas.map((event) => (event.type === "content.delta" ? event.payload.streamKind : "")),
+        ["reasoning_text", "assistant_text"],
+      );
+      NodeAssert.deepEqual(
+        deltas.map((event) => (event.type === "content.delta" ? event.payload.delta : "")),
+        ["hidden", "answer"],
+      );
+      NodeAssert.equal(events.at(-1)?.type, "item.completed");
+      const completed = events.at(-1);
+      if (completed?.type === "item.completed") {
+        NodeAssert.equal(completed.payload.detail, "answer");
+      }
     }),
   );
 
