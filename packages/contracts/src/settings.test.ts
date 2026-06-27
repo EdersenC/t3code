@@ -3,13 +3,16 @@ import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ClientSettingsPatch,
   ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -28,6 +31,66 @@ describe("ClientSettings word wrap", () => {
     expect(decoded.wordWrap).toBe(true);
     expect(decoded).not.toHaveProperty("chatWordWrap");
     expect(decoded).not.toHaveProperty("diffWordWrap");
+  });
+});
+
+describe("ClientSettings personalization", () => {
+  it("defaults personalization controls for legacy settings", () => {
+    const decoded = decodeClientSettings({});
+
+    expect(decoded.uiAccentColor).toBe(DEFAULT_CLIENT_SETTINGS.uiAccentColor);
+    expect(decoded.customUiAccentColor).toBe(DEFAULT_CLIENT_SETTINGS.customUiAccentColor);
+    expect(decoded.uiSecondaryColor).toBe(DEFAULT_CLIENT_SETTINGS.uiSecondaryColor);
+    expect(decoded.customUiSecondaryColor).toBe(DEFAULT_CLIENT_SETTINGS.customUiSecondaryColor);
+    expect(decoded.uiFontFamily).toBe(DEFAULT_CLIENT_SETTINGS.uiFontFamily);
+    expect(decoded.uiMonoFontFamily).toBe(DEFAULT_CLIENT_SETTINGS.uiMonoFontFamily);
+    expect(decoded.uiFontSize).toBe(DEFAULT_CLIENT_SETTINGS.uiFontSize);
+    expect(decoded.uiCodeFontSize).toBe(DEFAULT_CLIENT_SETTINGS.uiCodeFontSize);
+    expect(decoded.interfaceDensity).toBe(DEFAULT_CLIENT_SETTINGS.interfaceDensity);
+    expect(decoded.interfaceContrast).toBe(DEFAULT_CLIENT_SETTINGS.interfaceContrast);
+    expect(decoded.backgroundTexture).toBe(DEFAULT_CLIENT_SETTINGS.backgroundTexture);
+  });
+
+  it("accepts personalization patches", () => {
+    const patch = decodeClientSettingsPatch({
+      backgroundTexture: "visible",
+      customUiAccentColor: "  #123abc  ",
+      customUiSecondaryColor: "abc",
+      interfaceContrast: "high",
+      interfaceDensity: "compact",
+      uiAccentColor: "custom",
+      uiCodeFontSize: "large",
+      uiFontFamily: "serif",
+      uiFontSize: "large",
+      uiMonoFontFamily: "system",
+      uiSecondaryColor: "custom",
+    });
+
+    expect(patch).toEqual({
+      backgroundTexture: "visible",
+      customUiAccentColor: "#123abc",
+      customUiSecondaryColor: "#aabbcc",
+      interfaceContrast: "high",
+      interfaceDensity: "compact",
+      uiAccentColor: "custom",
+      uiCodeFontSize: "large",
+      uiFontFamily: "serif",
+      uiFontSize: "large",
+      uiMonoFontFamily: "system",
+      uiSecondaryColor: "custom",
+    });
+  });
+
+  it("normalizes invalid custom color patches back to defaults", () => {
+    const patch = decodeClientSettingsPatch({
+      customUiAccentColor: "not-a-color",
+      customUiSecondaryColor: "#12",
+    });
+
+    expect(patch).toEqual({
+      customUiAccentColor: DEFAULT_CLIENT_SETTINGS.customUiAccentColor,
+      customUiSecondaryColor: DEFAULT_CLIENT_SETTINGS.customUiSecondaryColor,
+    });
   });
 });
 

@@ -34,6 +34,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import { useOpenInPreferredEditor } from "../editorPreferences";
+import { useClientSettings } from "../hooks/useSettings";
 import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
@@ -59,6 +60,7 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readLocalApi } from "~/localApi";
+import { resolveTerminalTypography, selectTerminalTypographySettings } from "../personalization";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
 import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
@@ -333,6 +335,11 @@ export function TerminalViewport({
   const selectionActionOpenRef = useRef(false);
   const selectionActionTimerRef = useRef<number | null>(null);
   const keybindingsRef = useRef(keybindings);
+  const terminalTypographySettings = useClientSettings(selectTerminalTypographySettings);
+  const terminalTypography = useMemo(
+    () => resolveTerminalTypography(terminalTypographySettings),
+    [terminalTypographySettings.uiCodeFontSize, terminalTypographySettings.uiMonoFontFamily],
+  );
   const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
@@ -388,10 +395,9 @@ export function TerminalViewport({
     const terminal = new Terminal({
       cursorBlink: true,
       lineHeight: 1,
-      fontSize: 12,
+      fontSize: terminalTypography.fontSize,
       scrollback: 5_000,
-      fontFamily:
-        '"SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace',
+      fontFamily: terminalTypography.fontFamily,
       theme: terminalThemeFromApp(mount),
     });
     terminal.loadAddon(fitAddon);
@@ -706,6 +712,29 @@ export function TerminalViewport({
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
+
+  useEffect(() => {
+    const activeTerminal = terminalRef.current;
+    if (!activeTerminal) return;
+    const fontChanged =
+      activeTerminal.options.fontFamily !== terminalTypography.fontFamily ||
+      activeTerminal.options.fontSize !== terminalTypography.fontSize;
+    if (!fontChanged) return;
+
+    activeTerminal.options.fontFamily = terminalTypography.fontFamily;
+    activeTerminal.options.fontSize = terminalTypography.fontSize;
+    activeTerminal.refresh(0, activeTerminal.rows - 1);
+
+    const activeFitAddon = fitAddonRef.current;
+    if (!activeFitAddon) return;
+    const wasAtBottom =
+      activeTerminal.buffer.active.viewportY >= activeTerminal.buffer.active.baseY;
+    fitTerminalSafely(activeFitAddon);
+    if (wasAtBottom) {
+      activeTerminal.scrollToBottom();
+    }
+    void resizeTerminal(activeTerminal.cols, activeTerminal.rows);
+  }, [resizeTerminal, terminalTypography.fontFamily, terminalTypography.fontSize]);
 
   useEffect(() => {
     const terminal = terminalRef.current;

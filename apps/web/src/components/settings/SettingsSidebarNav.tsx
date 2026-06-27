@@ -6,6 +6,7 @@ import {
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
+  PaletteIcon,
   Settings2Icon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
@@ -24,6 +25,7 @@ import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3Conne
 
 export type SettingsSectionPath =
   | "/settings/general"
+  | "/settings/personalization"
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/source-control"
@@ -36,6 +38,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Personalization", to: "/settings/personalization", icon: PaletteIcon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
@@ -82,8 +85,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     isActive={isActive}
                     className={
                       isActive
-                        ? "gap-2.5 px-2.5 py-2 text-left text-[13px] font-medium text-foreground"
-                        : "gap-2.5 px-2.5 py-2 text-left text-[13px] text-muted-foreground/70 hover:text-foreground/80"
+                        ? "gap-2.5 px-2.5 py-2 text-left text-[0.8125rem] font-medium text-foreground"
+                        : "gap-2.5 px-2.5 py-2 text-left text-[0.8125rem] text-muted-foreground/70 hover:text-foreground/80"
                     }
                     onClick={() => handleSectionClick(item.to)}
                   >

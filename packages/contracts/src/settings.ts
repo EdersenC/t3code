@@ -39,8 +39,112 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
+export const UiAccentColor = Schema.Literals([
+  "blue",
+  "sky",
+  "cyan",
+  "teal",
+  "emerald",
+  "amber",
+  "orange",
+  "rose",
+  "fuchsia",
+  "violet",
+  "indigo",
+  "slate",
+  "custom",
+]);
+export type UiAccentColor = typeof UiAccentColor.Type;
+export const DEFAULT_UI_ACCENT_COLOR: UiAccentColor = "blue";
+
+export const UiSecondaryColor = Schema.Literals([
+  "neutral",
+  "slate",
+  "blue",
+  "teal",
+  "emerald",
+  "amber",
+  "rose",
+  "violet",
+  "custom",
+]);
+export type UiSecondaryColor = typeof UiSecondaryColor.Type;
+export const DEFAULT_UI_SECONDARY_COLOR: UiSecondaryColor = "neutral";
+export const DEFAULT_CUSTOM_UI_ACCENT_COLOR = "#2563eb";
+export const DEFAULT_CUSTOM_UI_SECONDARY_COLOR = "#64748b";
+
+const HEX_COLOR_PATTERN = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+function normalizeHexColorSetting(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  const candidate = trimmed.startsWith("#") ? trimmed : "#" + trimmed;
+  if (!HEX_COLOR_PATTERN.test(candidate)) {
+    return fallback;
+  }
+  if (candidate.length === 4) {
+    const r = candidate[1] ?? "0";
+    const g = candidate[2] ?? "0";
+    const b = candidate[3] ?? "0";
+    return ("#" + r + r + g + g + b + b).toLowerCase();
+  }
+  return candidate.toLowerCase();
+}
+
+const makeHexColorSetting = (fallback: string) =>
+  TrimmedString.pipe(
+    Schema.decodeTo(
+      Schema.String,
+      SchemaTransformation.transformOrFail({
+        decode: (value) => Effect.succeed(normalizeHexColorSetting(value, fallback)),
+        encode: (value) => Effect.succeed(normalizeHexColorSetting(value, fallback)),
+      }),
+    ),
+  );
+
+export const UiFontFamily = Schema.Literals(["dm-sans", "system", "serif", "mono"]);
+export type UiFontFamily = typeof UiFontFamily.Type;
+export const DEFAULT_UI_FONT_FAMILY: UiFontFamily = "dm-sans";
+
+export const UiMonoFontFamily = Schema.Literals([
+  "jetbrains-mono",
+  "system",
+  "sf-mono",
+  "monospace",
+]);
+export type UiMonoFontFamily = typeof UiMonoFontFamily.Type;
+export const DEFAULT_UI_MONO_FONT_FAMILY: UiMonoFontFamily = "jetbrains-mono";
+
+export const UiFontSize = Schema.Literals(["small", "default", "large", "extra-large"]);
+export type UiFontSize = typeof UiFontSize.Type;
+export const DEFAULT_UI_FONT_SIZE: UiFontSize = "default";
+
+export const UiCodeFontSize = Schema.Literals(["small", "default", "large"]);
+export type UiCodeFontSize = typeof UiCodeFontSize.Type;
+export const DEFAULT_UI_CODE_FONT_SIZE: UiCodeFontSize = "default";
+
+export const InterfaceDensity = Schema.Literals(["compact", "comfortable", "spacious"]);
+export type InterfaceDensity = typeof InterfaceDensity.Type;
+export const DEFAULT_INTERFACE_DENSITY: InterfaceDensity = "comfortable";
+
+export const InterfaceContrast = Schema.Literals(["standard", "high"]);
+export type InterfaceContrast = typeof InterfaceContrast.Type;
+export const DEFAULT_INTERFACE_CONTRAST: InterfaceContrast = "standard";
+
+export const BackgroundTexture = Schema.Literals(["none", "subtle", "visible"]);
+export type BackgroundTexture = typeof BackgroundTexture.Type;
+export const DEFAULT_BACKGROUND_TEXTURE: BackgroundTexture = "subtle";
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  backgroundTexture: BackgroundTexture.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BACKGROUND_TEXTURE)),
+  ),
+  customUiAccentColor: makeHexColorSetting(DEFAULT_CUSTOM_UI_ACCENT_COLOR).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CUSTOM_UI_ACCENT_COLOR)),
+  ),
+  customUiSecondaryColor: makeHexColorSetting(DEFAULT_CUSTOM_UI_SECONDARY_COLOR).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CUSTOM_UI_SECONDARY_COLOR)),
+  ),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
@@ -72,6 +176,12 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  interfaceContrast: InterfaceContrast.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_CONTRAST)),
+  ),
+  interfaceDensity: InterfaceDensity.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_DENSITY)),
+  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -90,6 +200,22 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  uiAccentColor: UiAccentColor.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_ACCENT_COLOR)),
+  ),
+  uiCodeFontSize: UiCodeFontSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_CODE_FONT_SIZE)),
+  ),
+  uiFontFamily: UiFontFamily.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_FONT_FAMILY)),
+  ),
+  uiFontSize: UiFontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_FONT_SIZE))),
+  uiMonoFontFamily: UiMonoFontFamily.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_MONO_FONT_FAMILY)),
+  ),
+  uiSecondaryColor: UiSecondaryColor.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_SECONDARY_COLOR)),
   ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
@@ -535,6 +661,11 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
+  backgroundTexture: Schema.optionalKey(BackgroundTexture),
+  customUiAccentColor: Schema.optionalKey(makeHexColorSetting(DEFAULT_CUSTOM_UI_ACCENT_COLOR)),
+  customUiSecondaryColor: Schema.optionalKey(
+    makeHexColorSetting(DEFAULT_CUSTOM_UI_SECONDARY_COLOR),
+  ),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
@@ -559,6 +690,8 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  interfaceContrast: Schema.optionalKey(InterfaceContrast),
+  interfaceDensity: Schema.optionalKey(InterfaceDensity),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
@@ -567,6 +700,12 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  uiAccentColor: Schema.optionalKey(UiAccentColor),
+  uiCodeFontSize: Schema.optionalKey(UiCodeFontSize),
+  uiFontFamily: Schema.optionalKey(UiFontFamily),
+  uiFontSize: Schema.optionalKey(UiFontSize),
+  uiMonoFontFamily: Schema.optionalKey(UiMonoFontFamily),
+  uiSecondaryColor: Schema.optionalKey(UiSecondaryColor),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
