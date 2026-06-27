@@ -1,10 +1,12 @@
 import {
   EventId,
+  type ModelSelection,
   type OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ThreadTokenUsageSnapshot,
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
@@ -51,11 +53,17 @@ import {
 } from "../opencodeRuntime.ts";
 import * as Option from "effect/Option";
 
-const PROVIDER = ProviderDriverKind.make("opencode");
+const DEFAULT_PROVIDER = ProviderDriverKind.make("opencode");
 
 interface OpenCodeTurnSnapshot {
   readonly id: TurnId;
   readonly items: Array<unknown>;
+}
+
+interface OpenCodeTurnInputSnapshot {
+  readonly text: string;
+  readonly attachmentCount: number;
+  readonly modelSelection?: ModelSelection | undefined;
 }
 
 type OpenCodeSubscribedEvent =
@@ -75,9 +83,12 @@ interface OpenCodeSessionContext {
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
   readonly partById: Map<string, Part>;
+  readonly rawTextByPartId: Map<string, string>;
   readonly emittedTextByPartId: Map<string, string>;
+  readonly emittedReasoningTextByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
+  readonly turnInputs: Map<TurnId, OpenCodeTurnInputSnapshot>;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
@@ -98,11 +109,39 @@ interface OpenCodeSessionContext {
   readonly sessionScope: Scope.Closeable;
 }
 
+export interface OpenCodeErrorDetailInput {
+  readonly method: string;
+  readonly detail: string;
+  readonly threadId?: ThreadId | undefined;
+  readonly modelSelection?: ModelSelection | undefined;
+  readonly phase?: "load" | "answer" | undefined;
+}
+
+export interface OpenCodeTokenUsageEstimateInput {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly modelSelection?: ModelSelection | undefined;
+  readonly inputText: string;
+  readonly assistantText: string;
+  readonly attachmentCount: number;
+}
+
 export interface OpenCodeAdapterLiveOptions {
+  readonly provider?: ProviderDriverKind;
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly configContent?:
+    | string
+    | ((input: {
+        readonly modelSelection?: ModelSelection | undefined;
+      }) => Effect.Effect<string | undefined>);
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly describeErrorDetail?: (input: OpenCodeErrorDetailInput) => string;
+  readonly estimateTokenUsage?: (
+    input: OpenCodeTokenUsageEstimateInput,
+  ) => Effect.Effect<ThreadTokenUsageSnapshot | undefined>;
+  readonly splitInlineThinking?: boolean | undefined;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -113,11 +152,15 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
  * sites pipe through this in `Effect.mapError` so they never build the error
  * shape by hand.
  */
-const toRequestError = (cause: OpenCodeRuntimeError): ProviderAdapterRequestError =>
+const toRequestError = (
+  provider: ProviderDriverKind,
+  cause: OpenCodeRuntimeError,
+  detail: string = cause.detail,
+): ProviderAdapterRequestError =>
   new ProviderAdapterRequestError({
-    provider: PROVIDER,
+    provider,
     method: cause.operation,
-    detail: cause.detail,
+    detail,
     cause: cause.cause,
   });
 
@@ -127,11 +170,17 @@ const toRequestError = (cause: OpenCodeRuntimeError): ProviderAdapterRequestErro
  * in which case we preserve its `detail`; otherwise we fall back to
  * {@link openCodeRuntimeErrorDetail} for unknown causes (defects, etc.).
  */
-const toProcessError = (threadId: ThreadId, cause: unknown): ProviderAdapterProcessError =>
+const toProcessError = (
+  provider: ProviderDriverKind,
+  threadId: ThreadId,
+  cause: unknown,
+  detail?: string | undefined,
+): ProviderAdapterProcessError =>
   new ProviderAdapterProcessError({
-    provider: PROVIDER,
+    provider,
     threadId,
-    detail: OpenCodeRuntimeError.is(cause) ? cause.detail : openCodeRuntimeErrorDetail(cause),
+    detail:
+      detail ?? (OpenCodeRuntimeError.is(cause) ? cause.detail : openCodeRuntimeErrorDetail(cause)),
     cause,
   });
 
@@ -231,11 +280,12 @@ function appendTurnItem(
 function ensureSessionContext(
   sessions: ReadonlyMap<ThreadId, OpenCodeSessionContext>,
   threadId: ThreadId,
+  provider: ProviderDriverKind,
 ): OpenCodeSessionContext {
   const session = sessions.get(threadId);
   if (!session) {
     throw new ProviderAdapterSessionNotFoundError({
-      provider: PROVIDER,
+      provider,
       threadId,
     });
   }
@@ -244,7 +294,7 @@ function ensureSessionContext(
   // no fiber suspension required, which keeps this callable everywhere.
   if (Ref.getUnsafe(session.stopped)) {
     throw new ProviderAdapterSessionClosedError({
-      provider: PROVIDER,
+      provider,
       threadId,
     });
   }
@@ -266,6 +316,68 @@ function normalizeQuestionRequest(request: QuestionRequest): ReadonlyArray<UserI
 
 function resolveTextStreamKind(part: Part | undefined): "assistant_text" | "reasoning_text" {
   return part?.type === "reasoning" ? "reasoning_text" : "assistant_text";
+}
+
+const INLINE_THINK_OPEN_TAG = "<think>";
+const INLINE_THINK_CLOSE_TAG = "</think>";
+
+export interface InlineThinkingSplit {
+  readonly assistantText: string;
+  readonly reasoningText: string;
+  readonly hasInlineThinking: boolean;
+}
+
+function withoutTrailingInlineThinkingOpenTagPrefix(text: string): string {
+  const maxSuffixLength = Math.min(INLINE_THINK_OPEN_TAG.length - 1, text.length);
+  for (let length = maxSuffixLength; length > 0; length -= 1) {
+    const suffix = text.slice(-length).toLowerCase();
+    if (INLINE_THINK_OPEN_TAG.startsWith(suffix)) {
+      return text.slice(0, -length);
+    }
+  }
+  return text;
+}
+
+export function splitInlineThinkingText(text: string): InlineThinkingSplit {
+  const lower = text.toLowerCase();
+  let cursor = 0;
+  let inThinking = false;
+  let hasInlineThinking = false;
+  let assistantText = "";
+  let reasoningText = "";
+
+  while (cursor < text.length) {
+    if (!inThinking) {
+      const openIndex = lower.indexOf(INLINE_THINK_OPEN_TAG, cursor);
+      if (openIndex === -1) {
+        assistantText = withoutTrailingInlineThinkingOpenTagPrefix(
+          assistantText + text.slice(cursor),
+        );
+        break;
+      }
+      assistantText += text.slice(cursor, openIndex);
+      cursor = openIndex + INLINE_THINK_OPEN_TAG.length;
+      inThinking = true;
+      hasInlineThinking = true;
+      continue;
+    }
+
+    const closeIndex = lower.indexOf(INLINE_THINK_CLOSE_TAG, cursor);
+    if (closeIndex === -1) {
+      reasoningText += text.slice(cursor);
+      break;
+    }
+    reasoningText += text.slice(cursor, closeIndex);
+    cursor = closeIndex + INLINE_THINK_CLOSE_TAG.length;
+    inThinking = false;
+  }
+
+  return { assistantText, reasoningText, hasInlineThinking };
+}
+
+function isInlineThinkingTagPrefix(text: string): boolean {
+  const trimmed = text.trimStart().toLowerCase();
+  return trimmed.length > 0 && INLINE_THINK_OPEN_TAG.startsWith(trimmed);
 }
 
 function textFromPart(part: Part): string | undefined {
@@ -429,7 +541,16 @@ export function makeOpenCodeAdapter(
   options?: OpenCodeAdapterLiveOptions,
 ) {
   return Effect.gen(function* () {
-    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("opencode");
+    const provider = options?.provider ?? DEFAULT_PROVIDER;
+    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make(provider);
+    const describeErrorDetail = (input: OpenCodeErrorDetailInput) =>
+      options?.describeErrorDetail?.(input) ?? input.detail;
+    const mapOpenCodeRequestError = (cause: OpenCodeRuntimeError) =>
+      toRequestError(
+        provider,
+        cause,
+        describeErrorDetail({ method: cause.operation, detail: cause.detail }),
+      );
     const serverConfig = yield* ServerConfig;
     const openCodeRuntime = yield* OpenCodeRuntime;
     const crypto = yield* Crypto.Crypto;
@@ -450,13 +571,21 @@ export function makeOpenCodeAdapter(
       Effect.mapError(
         (cause) =>
           new ProviderAdapterRequestError({
-            provider: PROVIDER,
+            provider,
             method: "crypto/randomUUIDv4",
             detail: "Failed to generate OpenCode runtime identifier.",
             cause,
           }),
       ),
     );
+    const resolveConfigContent = (input: {
+      readonly modelSelection?: ModelSelection | undefined;
+    }) => {
+      const configContent = options?.configContent;
+      if (typeof configContent === "function") return configContent(input);
+      return Effect.succeed(configContent);
+    };
+
     const buildEventBase = (input: EventBaseInput) =>
       Effect.all({
         eventId: randomUUIDv4.pipe(Effect.map(EventId.make)),
@@ -464,7 +593,7 @@ export function makeOpenCodeAdapter(
       }).pipe(
         Effect.map(({ eventId, createdAt }) => ({
           eventId,
-          provider: PROVIDER,
+          provider,
           threadId: input.threadId,
           createdAt,
           ...(input.turnId ? { turnId: input.turnId } : {}),
@@ -526,6 +655,51 @@ export function makeOpenCodeAdapter(
       },
     ) => writeNativeEvent(threadId, event).pipe(Effect.catchCause(() => Effect.void));
 
+    const emitEstimatedTokenUsage = Effect.fn("emitEstimatedTokenUsage")(function* (
+      context: OpenCodeSessionContext,
+      turnId: TurnId,
+      raw: unknown,
+    ) {
+      const estimateTokenUsage = options?.estimateTokenUsage;
+      if (!estimateTokenUsage) {
+        return;
+      }
+
+      const turnInput = context.turnInputs.get(turnId);
+      const allInputText = [...context.turnInputs.values()]
+        .map((input) => input.text)
+        .filter((value) => value.length > 0)
+        .join("\n\n");
+      const attachmentCount = [...context.turnInputs.values()].reduce(
+        (total, input) => total + input.attachmentCount,
+        0,
+      );
+      const assistantText = [...context.emittedTextByPartId.values()]
+        .filter((value) => value.length > 0)
+        .join("\n\n");
+      const usage = yield* estimateTokenUsage({
+        threadId: context.session.threadId,
+        turnId,
+        modelSelection: turnInput?.modelSelection,
+        inputText: allInputText,
+        assistantText,
+        attachmentCount,
+      });
+      if (!usage) {
+        return;
+      }
+
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          raw,
+        })),
+        type: "thread.token-usage.updated",
+        payload: { usage },
+      });
+    });
+
     const emitUnexpectedExit = Effect.fn("emitUnexpectedExit")(function* (
       context: OpenCodeSessionContext,
       message: string,
@@ -586,6 +760,93 @@ export function makeOpenCodeAdapter(
       if (text === undefined) {
         return;
       }
+
+      context.rawTextByPartId.set(part.id, text);
+      const createdAt =
+        (part.type === "text" || part.type === "reasoning") && part.time !== undefined
+          ? isoFromEpochMs(part.time.start)
+          : undefined;
+
+      const emitTextDelta = (input: {
+        readonly streamKind: "assistant_text" | "reasoning_text";
+        readonly delta: string;
+      }) =>
+        buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          itemId: part.id,
+          createdAt,
+          raw,
+        }).pipe(
+          Effect.flatMap((base) =>
+            emit({
+              ...base,
+              type: "content.delta",
+              payload: input,
+            }),
+          ),
+        );
+
+      if (options?.splitInlineThinking === true && part.type === "text") {
+        const split = splitInlineThinkingText(text);
+        if (!split.hasInlineThinking && isInlineThinkingTagPrefix(text)) {
+          return;
+        }
+
+        if (split.hasInlineThinking) {
+          const reasoningUpdate = mergeOpenCodeAssistantText(
+            context.emittedReasoningTextByPartId.get(part.id),
+            split.reasoningText,
+          );
+          context.emittedReasoningTextByPartId.set(part.id, reasoningUpdate.latestText);
+          if (reasoningUpdate.deltaToEmit.length > 0) {
+            yield* emitTextDelta({
+              streamKind: "reasoning_text",
+              delta: reasoningUpdate.deltaToEmit,
+            });
+          }
+
+          const assistantUpdate = mergeOpenCodeAssistantText(
+            context.emittedTextByPartId.get(part.id),
+            split.assistantText,
+          );
+          context.emittedTextByPartId.set(part.id, assistantUpdate.latestText);
+          context.partById.set(part.id, {
+            ...part,
+            text: assistantUpdate.latestText,
+          } satisfies Part);
+          if (assistantUpdate.deltaToEmit.length > 0) {
+            yield* emitTextDelta({
+              streamKind: "assistant_text",
+              delta: assistantUpdate.deltaToEmit,
+            });
+          }
+
+          if (part.time?.end !== undefined && !context.completedAssistantPartIds.has(part.id)) {
+            context.completedAssistantPartIds.add(part.id);
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: part.id,
+                createdAt: isoFromEpochMs(part.time.end),
+                raw,
+              })),
+              type: "item.completed",
+              payload: {
+                itemType: "assistant_message",
+                status: "completed",
+                title: "Assistant message",
+                ...(assistantUpdate.latestText.length > 0
+                  ? { detail: assistantUpdate.latestText }
+                  : {}),
+              },
+            });
+          }
+          return;
+        }
+      }
+
       const previousText = context.emittedTextByPartId.get(part.id);
       const { latestText, deltaToEmit } = mergeOpenCodeAssistantText(previousText, text);
       context.emittedTextByPartId.set(part.id, latestText);
@@ -598,22 +859,9 @@ export function makeOpenCodeAdapter(
         );
       }
       if (deltaToEmit.length > 0) {
-        yield* emit({
-          ...(yield* buildEventBase({
-            threadId: context.session.threadId,
-            turnId,
-            itemId: part.id,
-            createdAt:
-              (part.type === "text" || part.type === "reasoning") && part.time !== undefined
-                ? isoFromEpochMs(part.time.start)
-                : undefined,
-            raw,
-          })),
-          type: "content.delta",
-          payload: {
-            streamKind: resolveTextStreamKind(part),
-            delta: deltaToEmit,
-          },
+        yield* emitTextDelta({
+          streamKind: resolveTextStreamKind(part),
+          delta: deltaToEmit,
         });
       }
 
@@ -656,7 +904,7 @@ export function makeOpenCodeAdapter(
       yield* writeNativeEventBestEffort(context.session.threadId, {
         observedAt: yield* nowIso,
         event: {
-          provider: PROVIDER,
+          provider,
           threadId: context.session.threadId,
           providerThreadId: context.openCodeSessionId,
           type: event.type,
@@ -693,39 +941,23 @@ export function makeOpenCodeAdapter(
           if (role !== "assistant") {
             break;
           }
-          const streamKind = resolveTextStreamKind(existingPart);
           const delta = event.properties.delta;
           if (delta.length === 0) {
             break;
           }
-          const previousText =
-            context.emittedTextByPartId.get(event.properties.partID) ??
+          const previousRawText =
+            context.rawTextByPartId.get(event.properties.partID) ??
             textFromPart(existingPart) ??
             "";
-          const { nextText, deltaToEmit } = appendOpenCodeAssistantTextDelta(previousText, delta);
-          if (deltaToEmit.length === 0) {
-            break;
-          }
-          context.emittedTextByPartId.set(event.properties.partID, nextText);
+          const nextRawText = previousRawText + delta;
           if (existingPart.type === "text" || existingPart.type === "reasoning") {
-            context.partById.set(event.properties.partID, {
+            const nextPart = {
               ...existingPart,
-              text: nextText,
-            });
+              text: nextRawText,
+            } satisfies Part;
+            context.partById.set(event.properties.partID, nextPart);
+            yield* emitAssistantTextDelta(context, nextPart, turnId, event);
           }
-          yield* emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              turnId,
-              itemId: event.properties.partID,
-              raw: event,
-            })),
-            type: "content.delta",
-            payload: {
-              streamKind,
-              delta: deltaToEmit,
-            },
-          });
           break;
         }
 
@@ -900,6 +1132,7 @@ export function makeOpenCodeAdapter(
           if (event.properties.status.type === "idle" && turnId) {
             context.activeTurnId = undefined;
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+            yield* emitEstimatedTokenUsage(context, turnId, event);
             yield* emit({
               ...(yield* buildEventBase({
                 threadId: context.session.threadId,
@@ -916,8 +1149,16 @@ export function makeOpenCodeAdapter(
         }
 
         case "session.error": {
-          const message = sessionErrorMessage(event.properties.error);
+          const rawMessage = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
+          const turnInput = activeTurnId ? context.turnInputs.get(activeTurnId) : undefined;
+          const message = describeErrorDetail({
+            method: "session.error",
+            detail: rawMessage,
+            threadId: context.session.threadId,
+            modelSelection: turnInput?.modelSelection,
+            phase: "answer",
+          });
           context.activeTurnId = undefined;
           yield* updateProviderSession(
             context,
@@ -1044,10 +1285,14 @@ export function makeOpenCodeAdapter(
               // The runtime binds the server's lifetime to the Scope.Scope
               // we provide below — closing `sessionScope` kills the child
               // process automatically. No manual `server.close()` needed.
+              const configContent = yield* resolveConfigContent({
+                modelSelection: input.modelSelection,
+              });
               const server = yield* openCodeRuntime.connectToOpenCodeServer({
                 binaryPath,
                 serverUrl,
                 ...(options?.environment ? { environment: options.environment } : {}),
+                ...(configContent !== undefined ? { configContent } : {}),
               });
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
@@ -1092,7 +1337,22 @@ export function makeOpenCodeAdapter(
           );
           if (Exit.isFailure(startedExit)) {
             yield* Scope.close(sessionScope, Exit.void).pipe(Effect.ignore);
-            return yield* toProcessError(input.threadId, Cause.squash(startedExit.cause));
+            const cause = Cause.squash(startedExit.cause);
+            const detail = OpenCodeRuntimeError.is(cause)
+              ? cause.detail
+              : openCodeRuntimeErrorDetail(cause);
+            return yield* toProcessError(
+              provider,
+              input.threadId,
+              cause,
+              describeErrorDetail({
+                method: OpenCodeRuntimeError.is(cause) ? cause.operation : "startSession",
+                detail,
+                threadId: input.threadId,
+                modelSelection: input.modelSelection,
+                phase: "load",
+              }),
+            );
           }
           return startedExit.value;
         });
@@ -1114,7 +1374,7 @@ export function makeOpenCodeAdapter(
 
         const createdAt = yield* nowIso;
         const session: ProviderSession = {
-          provider: PROVIDER,
+          provider,
           providerInstanceId: boundInstanceId,
           status: "ready",
           runtimeMode: input.runtimeMode,
@@ -1134,10 +1394,13 @@ export function makeOpenCodeAdapter(
           pendingPermissions: new Map(),
           pendingQuestions: new Map(),
           partById: new Map(),
+          rawTextByPartId: new Map(),
           emittedTextByPartId: new Map(),
+          emittedReasoningTextByPartId: new Map(),
           messageRoleById: new Map(),
           completedAssistantPartIds: new Set(),
           turns: [],
+          turnInputs: new Map(),
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
@@ -1167,7 +1430,7 @@ export function makeOpenCodeAdapter(
     );
 
     const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
-      const context = ensureSessionContext(sessions, input.threadId);
+      const context = ensureSessionContext(sessions, input.threadId, provider);
       // A sendTurn while a turn is active is a steer: OpenCode queues the
       // prompt into the busy session and the work continues as one turn, so
       // the active turn id is reused instead of opening a new turn.
@@ -1180,7 +1443,7 @@ export function makeOpenCodeAdapter(
           : undefined);
       if (modelSelection !== undefined && modelSelection.instanceId !== boundInstanceId) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
           issue: `OpenCode model selection is bound to instance '${modelSelection?.instanceId}', expected '${boundInstanceId}'.`,
         });
@@ -1188,7 +1451,7 @@ export function makeOpenCodeAdapter(
       const parsedModel = parseOpenCodeModelSlug(modelSelection?.model);
       if (!parsedModel) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
           issue: "OpenCode model selection must use the 'provider/model' format.",
         });
@@ -1205,7 +1468,7 @@ export function makeOpenCodeAdapter(
       });
       if ((!text || text.length === 0) && fileParts.length === 0) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
           issue: "OpenCode turns require text input or at least one attachment.",
         });
@@ -1213,6 +1476,12 @@ export function makeOpenCodeAdapter(
 
       const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
+      const previousTurnInput = context.turnInputs.get(turnId);
+      context.turnInputs.set(turnId, {
+        text: [previousTurnInput?.text, text ?? ""].filter(Boolean).join("\n\n"),
+        attachmentCount: (previousTurnInput?.attachmentCount ?? 0) + fileParts.length,
+        modelSelection,
+      });
 
       context.activeTurnId = turnId;
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
@@ -1247,7 +1516,19 @@ export function makeOpenCodeAdapter(
           parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
         }),
       ).pipe(
-        Effect.mapError(toRequestError),
+        Effect.mapError((cause) =>
+          toRequestError(
+            provider,
+            cause,
+            describeErrorDetail({
+              method: cause.operation,
+              detail: cause.detail,
+              threadId: input.threadId,
+              modelSelection,
+              phase: "answer",
+            }),
+          ),
+        ),
         // On failure of a fresh turn: clear active-turn state, flip the
         // session back to ready with lastError set, emit turn.aborted, then
         // let the typed error propagate. We don't need to rebuild the error
@@ -1260,6 +1541,7 @@ export function makeOpenCodeAdapter(
                 context.activeTurnId = undefined;
                 context.activeAgent = undefined;
                 context.activeVariant = undefined;
+                context.turnInputs.delete(turnId);
                 yield* updateProviderSession(
                   context,
                   {
@@ -1291,10 +1573,10 @@ export function makeOpenCodeAdapter(
 
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
-        const context = ensureSessionContext(sessions, threadId);
+        const context = ensureSessionContext(sessions, threadId, provider);
         yield* runOpenCodeSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.openCodeSessionId }),
-        ).pipe(Effect.mapError(toRequestError));
+        ).pipe(Effect.mapError(mapOpenCodeRequestError));
         if (turnId ?? context.activeTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
@@ -1313,10 +1595,10 @@ export function makeOpenCodeAdapter(
     const respondToRequest: OpenCodeAdapterShape["respondToRequest"] = Effect.fn(
       "respondToRequest",
     )(function* (threadId, requestId, decision) {
-      const context = ensureSessionContext(sessions, threadId);
+      const context = ensureSessionContext(sessions, threadId, provider);
       if (!context.pendingPermissions.has(requestId)) {
         return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
+          provider,
           method: "permission.reply",
           detail: `Unknown pending permission request: ${requestId}`,
         });
@@ -1327,17 +1609,17 @@ export function makeOpenCodeAdapter(
           requestID: requestId,
           reply: toOpenCodePermissionReply(decision),
         }),
-      ).pipe(Effect.mapError(toRequestError));
+      ).pipe(Effect.mapError(mapOpenCodeRequestError));
     });
 
     const respondToUserInput: OpenCodeAdapterShape["respondToUserInput"] = Effect.fn(
       "respondToUserInput",
     )(function* (threadId, requestId, answers) {
-      const context = ensureSessionContext(sessions, threadId);
+      const context = ensureSessionContext(sessions, threadId, provider);
       const request = context.pendingQuestions.get(requestId);
       if (!request) {
         return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
+          provider,
           method: "question.reply",
           detail: `Unknown pending user-input request: ${requestId}`,
         });
@@ -1348,7 +1630,7 @@ export function makeOpenCodeAdapter(
           requestID: requestId,
           answers: toOpenCodeQuestionAnswers(request, answers),
         }),
-      ).pipe(Effect.mapError(toRequestError));
+      ).pipe(Effect.mapError(mapOpenCodeRequestError));
     });
 
     const stopSession: OpenCodeAdapterShape["stopSession"] = Effect.fn("stopSession")(
@@ -1356,7 +1638,7 @@ export function makeOpenCodeAdapter(
         const context = sessions.get(threadId);
         if (!context) {
           throw new ProviderAdapterSessionNotFoundError({
-            provider: PROVIDER,
+            provider,
             threadId,
           });
         }
@@ -1385,12 +1667,12 @@ export function makeOpenCodeAdapter(
 
     const readThread: OpenCodeAdapterShape["readThread"] = Effect.fn("readThread")(
       function* (threadId) {
-        const context = ensureSessionContext(sessions, threadId);
+        const context = ensureSessionContext(sessions, threadId, provider);
         const messages = yield* runOpenCodeSdk("session.messages", () =>
           context.client.session.messages({
             sessionID: context.openCodeSessionId,
           }),
-        ).pipe(Effect.mapError(toRequestError));
+        ).pipe(Effect.mapError(mapOpenCodeRequestError));
 
         const turns: Array<OpenCodeTurnSnapshot> = [];
         for (const entry of messages.data ?? []) {
@@ -1411,12 +1693,12 @@ export function makeOpenCodeAdapter(
 
     const rollbackThread: OpenCodeAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
       function* (threadId, numTurns) {
-        const context = ensureSessionContext(sessions, threadId);
+        const context = ensureSessionContext(sessions, threadId, provider);
         const messages = yield* runOpenCodeSdk("session.messages", () =>
           context.client.session.messages({
             sessionID: context.openCodeSessionId,
           }),
-        ).pipe(Effect.mapError(toRequestError));
+        ).pipe(Effect.mapError(mapOpenCodeRequestError));
 
         const assistantMessages = (messages.data ?? []).filter(
           (entry) => entry.info.role === "assistant",
@@ -1428,7 +1710,7 @@ export function makeOpenCodeAdapter(
             sessionID: context.openCodeSessionId,
             ...(target ? { messageID: target.info.id } : {}),
           }),
-        ).pipe(Effect.mapError(toRequestError));
+        ).pipe(Effect.mapError(mapOpenCodeRequestError));
 
         return yield* readThread(threadId);
       },
@@ -1450,7 +1732,7 @@ export function makeOpenCodeAdapter(
       });
 
     return {
-      provider: PROVIDER,
+      provider,
       capabilities: {
         sessionModelSwitch: "in-session",
       },

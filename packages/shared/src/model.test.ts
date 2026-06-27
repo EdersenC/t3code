@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_MODEL,
+  DEFAULT_OLLAMA_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
   type ModelCapabilities,
@@ -84,6 +85,13 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug(null)).toBeNull();
     expect(normalizeModelSlug(undefined)).toBeNull();
   });
+
+  it("prefixes Ollama local model ids for the OpenCode harness", () => {
+    const ollama = ProviderDriverKind.make("ollama");
+    expect(normalizeModelSlug("llama3.2:3b", ollama)).toBe("ollama/llama3.2:3b");
+    expect(normalizeModelSlug(" ollama/qwen2.5-coder:7b ", ollama)).toBe("ollama/qwen2.5-coder:7b");
+    expect(normalizeModelSlug("hf.co/example/model", ollama)).toBe("ollama/hf.co/example/model");
+  });
 });
 
 describe("resolveModelSlugForProvider", () => {
@@ -92,7 +100,7 @@ describe("resolveModelSlugForProvider", () => {
       DEFAULT_MODEL,
     );
     expect(resolveModelSlugForProvider(ProviderDriverKind.make("ollama"), undefined)).toBe(
-      DEFAULT_MODEL,
+      DEFAULT_OLLAMA_MODEL,
     );
     expect(resolveModelSlugForProvider(ProviderDriverKind.make("grok"), undefined)).toBe(
       "grok-build",

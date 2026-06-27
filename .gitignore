@@ -29,6 +29,8 @@ dist-electron/
 .electron-runtime/
 node_modules/
 .alchemy/
+.codex/
+\\wsl.localhost\\Ubuntu\\home\\eddy\\.codex/
 *.log
 .env*
 !.env.example

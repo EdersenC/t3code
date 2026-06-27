@@ -175,6 +175,22 @@ function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): str
     .trim();
 }
 
+export interface OpenCodeTextGenerationErrorDetailInput {
+  readonly detail: string;
+  readonly modelSelection: ModelSelection;
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly emptyOutput?: boolean | undefined;
+}
+
+export interface OpenCodeTextGenerationOptions {
+  readonly configContent?: string | undefined;
+  readonly resolveConfigContent?: (input: {
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<string | undefined>;
+  readonly describeErrorDetail?: (input: OpenCodeTextGenerationErrorDetailInput) => string;
+}
+
 interface SharedOpenCodeTextGenerationServerState {
   server: OpenCodeRuntime.OpenCodeServerProcess | null;
   /**
@@ -185,6 +201,7 @@ interface SharedOpenCodeTextGenerationServerState {
    */
   serverScope: Scope.Closeable | null;
   binaryPath: string | null;
+  configContent: string | undefined;
   activeRequests: number;
   idleCloseFiber: Fiber.Fiber<void, never> | null;
 }
@@ -192,6 +209,7 @@ interface SharedOpenCodeTextGenerationServerState {
 export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration")(function* (
   openCodeSettings: OpenCodeSettings,
   environment?: NodeJS.ProcessEnv,
+  options?: OpenCodeTextGenerationOptions,
 ) {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
@@ -204,6 +222,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     server: null,
     serverScope: null,
     binaryPath: null,
+    configContent: undefined,
     activeRequests: 0,
     idleCloseFiber: null,
   };
@@ -213,6 +232,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     sharedServerState.server = null;
     sharedServerState.serverScope = null;
     sharedServerState.binaryPath = null;
+    sharedServerState.configContent = undefined;
     if (scope !== null) {
       yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
     }
@@ -249,6 +269,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
 
   const acquireSharedServer = (input: {
     readonly binaryPath: string;
+    readonly configContent?: string | undefined;
     readonly operation:
       | "generateCommitMessage"
       | "generatePrContent"
@@ -261,19 +282,15 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
 
         const existingServer = sharedServerState.server;
         if (existingServer !== null) {
-          if (
-            sharedServerState.binaryPath !== input.binaryPath &&
-            sharedServerState.activeRequests === 0
-          ) {
+          const hasServerMismatch =
+            sharedServerState.binaryPath !== input.binaryPath ||
+            sharedServerState.configContent !== input.configContent;
+          if (hasServerMismatch && sharedServerState.activeRequests === 0) {
             yield* closeSharedServer();
           } else {
-            if (sharedServerState.binaryPath !== input.binaryPath) {
+            if (hasServerMismatch) {
               yield* Effect.logWarning(
-                "OpenCode shared server binary path mismatch: requested " +
-                  input.binaryPath +
-                  " but active server uses " +
-                  sharedServerState.binaryPath +
-                  "; reusing existing server because there are active requests",
+                "OpenCode shared server configuration mismatch; reusing existing server because there are active requests",
               );
             }
             sharedServerState.activeRequests += 1;
@@ -302,6 +319,9 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
                   .startOpenCodeServerProcess({
                     binaryPath: input.binaryPath,
                     environment: resolvedEnvironment,
+                    ...(input.configContent !== undefined
+                      ? { configContent: input.configContent }
+                      : {}),
                   })
                   .pipe(
                     Effect.provideService(Scope.Scope, serverScope),
@@ -325,6 +345,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             sharedServerState.server = server;
             sharedServerState.serverScope = serverScope;
             sharedServerState.binaryPath = input.binaryPath;
+            sharedServerState.configContent = input.configContent;
             sharedServerState.activeRequests = 1;
             return server;
           }),
@@ -373,6 +394,18 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         detail: "OpenCode model selection must use the 'provider/model' format.",
       });
     }
+
+    const describePromptDetail = (
+      detail: string,
+      extra?: { readonly emptyOutput?: boolean | undefined },
+    ) =>
+      options?.describeErrorDetail?.({
+        detail,
+        modelSelection: input.modelSelection,
+        providerId: parsedModel.providerID,
+        modelId: parsedModel.modelID,
+        ...(extra?.emptyOutput !== undefined ? { emptyOutput: extra.emptyOutput } : {}),
+      }) ?? detail;
 
     const fileParts = OpenCodeRuntime.toOpenCodeFileParts({
       attachments: input.attachments,
@@ -457,7 +490,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           Effect.fail(
             new TextGenerationError({
               operation: cause.operation,
-              detail: "OpenCode session.create request failed.",
+              detail: describePromptDetail("OpenCode session.create request failed."),
               cause,
             }),
           ),
@@ -465,7 +498,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           Effect.fail(
             new TextGenerationError({
               operation: cause.operation,
-              detail: "OpenCode session.create returned no session payload.",
+              detail: describePromptDetail("OpenCode session.create returned no session payload."),
               cause,
             }),
           ),
@@ -473,7 +506,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           Effect.fail(
             new TextGenerationError({
               operation: cause.operation,
-              detail: "OpenCode session.prompt request failed.",
+              detail: describePromptDetail("OpenCode session.prompt request failed."),
               cause,
             }),
           ),
@@ -481,7 +514,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           Effect.fail(
             new TextGenerationError({
               operation: cause.operation,
-              detail: cause.providerMessage,
+              detail: describePromptDetail(cause.providerMessage),
               cause,
             }),
           ),
@@ -489,12 +522,18 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           Effect.fail(
             new TextGenerationError({
               operation: cause.operation,
-              detail: "OpenCode returned empty output.",
+              detail: describePromptDetail("OpenCode returned empty output.", {
+                emptyOutput: true,
+              }),
               cause,
             }),
           ),
       }),
     );
+
+    const configContent = options?.resolveConfigContent
+      ? yield* options.resolveConfigContent({ modelSelection: input.modelSelection })
+      : options?.configContent;
 
     const rawOutput =
       openCodeSettings.serverUrl.length > 0
@@ -502,6 +541,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         : yield* Effect.acquireUseRelease(
             acquireSharedServer({
               binaryPath: openCodeSettings.binaryPath,
+              configContent,
               operation: input.operation,
             }),
             runAgainstServer,

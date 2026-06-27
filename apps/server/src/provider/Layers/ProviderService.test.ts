@@ -1664,6 +1664,28 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
     }),
   );
 
+  it.effect("skips interrupt recovery when a persisted binding has no active session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("thread-stale-interrupt");
+      const callsBefore = routing.codex.interruptTurn.mock.calls.length;
+
+      yield* directory.upsert({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        status: "running",
+        resumeCursor: null,
+        runtimeMode: "full-access",
+      });
+
+      yield* provider.interruptTurn({ threadId });
+
+      assert.equal(routing.codex.interruptTurn.mock.calls.length, callsBefore);
+    }),
+  );
+
   it.effect("records provider metrics with the routed provider label", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

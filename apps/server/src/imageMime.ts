@@ -29,6 +29,21 @@ export const SAFE_IMAGE_FILE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
+export const IMAGE_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
+  ".gif": "image/gif",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+  ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".tiff": "image/tiff",
+  ".webp": "image/webp",
+};
+
 export function parseBase64DataUrl(
   dataUrl: string,
 ): { readonly mimeType: string; readonly base64: string } | null {
@@ -79,4 +94,56 @@ export function inferImageExtension(input: { mimeType: string; fileName?: string
   }
 
   return ".bin";
+}
+
+export function inferImageMimeTypeFromFileName(fileName: string): string | null {
+  const extensionMatch = /\.([a-z0-9]{1,8})$/i.exec(fileName.trim());
+  const extension = extensionMatch ? `.${extensionMatch[1]!.toLowerCase()}` : "";
+  if (!SAFE_IMAGE_FILE_EXTENSIONS.has(extension)) {
+    return null;
+  }
+
+  return IMAGE_MIME_TYPE_BY_EXTENSION[extension] ?? Mime.getType(fileName) ?? null;
+}
+
+export function sniffImageMimeType(bytes: Uint8Array): string | null {
+  if (bytes.byteLength >= 8) {
+    const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    if (png.every((value, index) => bytes[index] === value)) return "image/png";
+  }
+
+  if (bytes.byteLength >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+
+  if (bytes.byteLength >= 6) {
+    const isGif87a =
+      bytes[0] === 0x47 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x46 &&
+      bytes[3] === 0x38 &&
+      bytes[4] === 0x37 &&
+      bytes[5] === 0x61;
+    const isGif89a =
+      bytes[0] === 0x47 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x46 &&
+      bytes[3] === 0x38 &&
+      bytes[4] === 0x39 &&
+      bytes[5] === 0x61;
+    if (isGif87a || isGif89a) return "image/gif";
+  }
+
+  if (bytes.byteLength >= 12) {
+    const isRiff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+    const isWebp =
+      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+    if (isRiff && isWebp) return "image/webp";
+  }
+
+  if (bytes.byteLength >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    return "image/bmp";
+  }
+
+  return null;
 }

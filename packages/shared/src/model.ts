@@ -11,6 +11,8 @@ import {
 } from "@t3tools/contracts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
+const OLLAMA_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("ollama");
+const OLLAMA_MODEL_SLUG_PREFIX = "ollama/";
 
 export interface SelectableModelOption {
   slug: string;
@@ -249,7 +251,16 @@ export function normalizeModelSlug(
   const aliased = Object.prototype.hasOwnProperty.call(aliases, trimmed)
     ? aliases[trimmed]
     : undefined;
-  return typeof aliased === "string" ? aliased : trimmed;
+  const normalized = typeof aliased === "string" ? aliased : trimmed;
+
+  if (
+    provider === OLLAMA_PROVIDER_DRIVER_KIND &&
+    !normalized.startsWith(OLLAMA_MODEL_SLUG_PREFIX)
+  ) {
+    return OLLAMA_MODEL_SLUG_PREFIX + normalized;
+  }
+
+  return normalized;
 }
 
 export function resolveSelectableModel(
