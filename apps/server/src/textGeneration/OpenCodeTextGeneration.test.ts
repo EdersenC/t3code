@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -23,6 +24,8 @@ const runtimeMock = {
     sessionCreateError: undefined as unknown,
     sessionResult: undefined as { data?: { id: string } } | undefined,
     promptRequestError: undefined as unknown,
+    promptGate: undefined as Promise<void> | undefined,
+    onPromptStart: undefined as (() => void) | undefined,
     promptResult: undefined as
       | { data?: { info?: { error?: unknown }; parts?: Array<unknown> } }
       | undefined,
@@ -35,6 +38,8 @@ const runtimeMock = {
     this.state.sessionCreateError = undefined;
     this.state.sessionResult = undefined;
     this.state.promptRequestError = undefined;
+    this.state.promptGate = undefined;
+    this.state.onPromptStart = undefined;
     this.state.promptResult = undefined;
   },
 };
@@ -78,6 +83,13 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
+          runtimeMock.state.onPromptStart?.();
+          if (
+            runtimeMock.state.promptGate !== undefined &&
+            runtimeMock.state.promptUrls.length === 1
+          ) {
+            await runtimeMock.state.promptGate;
+          }
           if (runtimeMock.state.promptRequestError !== undefined) {
             throw runtimeMock.state.promptRequestError;
           }
@@ -161,9 +173,14 @@ const EXISTING_SERVER_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
 function withOpenCodeTextGeneration<A, E, R>(
   settings: OpenCodeSettings,
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  options?: OpenCodeTextGeneration.OpenCodeTextGenerationOptions,
 ) {
   return Effect.gen(function* () {
-    const textGeneration = yield* OpenCodeTextGeneration.makeOpenCodeTextGeneration(settings);
+    const textGeneration = yield* OpenCodeTextGeneration.makeOpenCodeTextGeneration(
+      settings,
+      undefined,
+      options,
+    );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -240,6 +257,58 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
         expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("fails instead of reusing a warm server with mismatched config while active", () =>
+    withOpenCodeTextGeneration(
+      DEFAULT_OPENCODE_SETTINGS,
+      (textGeneration) =>
+        Effect.gen(function* () {
+          let releasePrompt = () => {};
+          let resolvePromptStarted = () => {};
+          runtimeMock.state.promptGate = new Promise<void>((resolve) => {
+            releasePrompt = resolve;
+          });
+          const promptStarted = new Promise<void>((resolve) => {
+            resolvePromptStarted = resolve;
+          });
+          runtimeMock.state.onPromptStart = resolvePromptStarted;
+
+          const firstFiber = yield* textGeneration
+            .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+            .pipe(Effect.forkChild);
+          yield* Effect.promise(() => promptStarted);
+
+          const error = yield* textGeneration
+            .generateCommitMessage({
+              ...DEFAULT_COMMIT_MESSAGE_INPUT,
+              modelSelection: {
+                ...DEFAULT_TEST_MODEL_SELECTION,
+                model: "openai/gpt-4",
+              },
+            })
+            .pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(TextGenerationError);
+          expect(error.message).toContain(
+            "OpenCode text generation server configuration changed while another request is active",
+          );
+          expect(error.cause).toMatchObject({
+            _tag: "OpenCodeTextGenerationSharedServerMismatchError",
+            activeConfigContent: "provider-a",
+            requestedConfigContent: "provider-b",
+          });
+          expect(runtimeMock.state.startCalls).toEqual(["fake-opencode"]);
+          expect(runtimeMock.state.promptUrls).toEqual(["http://127.0.0.1:4301"]);
+
+          releasePrompt();
+          yield* Fiber.join(firstFiber);
+        }),
+      {
+        resolveConfigContent: ({ modelSelection }) =>
+          Effect.succeed(modelSelection.model === "openai/gpt-5" ? "provider-a" : "provider-b"),
+      },
+    ),
   );
 
   it.effect("preserves the SDK cause when session creation fails", () =>

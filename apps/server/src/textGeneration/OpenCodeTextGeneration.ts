@@ -60,6 +60,21 @@ export class OpenCodeTextGenerationSessionRequestError extends Schema.TaggedErro
   }
 }
 
+export class OpenCodeTextGenerationSharedServerMismatchError extends Schema.TaggedErrorClass<OpenCodeTextGenerationSharedServerMismatchError>()(
+  "OpenCodeTextGenerationSharedServerMismatchError",
+  {
+    ...openCodeTextGenerationErrorContext,
+    activeBinaryPath: Schema.NullOr(Schema.String),
+    requestedBinaryPath: Schema.String,
+    activeConfigContent: Schema.optional(Schema.String),
+    requestedConfigContent: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `OpenCode text generation server configuration changed while another request is active for ${this.operation} in ${this.cwd}.`;
+  }
+}
+
 export class OpenCodeTextGenerationSessionPayloadError extends Schema.TaggedErrorClass<OpenCodeTextGenerationSessionPayloadError>()(
   "OpenCodeTextGenerationSessionPayloadError",
   openCodeTextGenerationErrorContext,
@@ -289,9 +304,18 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             yield* closeSharedServer();
           } else {
             if (hasServerMismatch) {
-              yield* Effect.logWarning(
-                "OpenCode shared server configuration mismatch; reusing existing server because there are active requests",
-              );
+              return yield* new OpenCodeTextGenerationSharedServerMismatchError({
+                operation: input.operation,
+                cwd: serverConfig.cwd,
+                activeBinaryPath: sharedServerState.binaryPath,
+                requestedBinaryPath: input.binaryPath,
+                ...(sharedServerState.configContent !== undefined
+                  ? { activeConfigContent: sharedServerState.configContent }
+                  : {}),
+                ...(input.configContent !== undefined
+                  ? { requestedConfigContent: input.configContent }
+                  : {}),
+              });
             }
             sharedServerState.activeRequests += 1;
             return existingServer;
@@ -546,6 +570,18 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             }),
             runAgainstServer,
             releaseSharedServer,
+          ).pipe(
+            Effect.catchTag("OpenCodeTextGenerationSharedServerMismatchError", (cause) =>
+              Effect.fail(
+                new TextGenerationError({
+                  operation: cause.operation,
+                  detail: describePromptDetail(
+                    "OpenCode text generation server configuration changed while another request is active; retry after the active request completes.",
+                  ),
+                  cause,
+                }),
+              ),
+            ),
           );
 
     const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));

@@ -749,6 +749,12 @@ export function makeOpenCodeAdapter(
       yield* Scope.close(context.sessionScope, Exit.void);
     });
 
+    const clearAssistantTextCaches = (context: OpenCodeSessionContext, partId: string) => {
+      context.rawTextByPartId.delete(partId);
+      context.emittedTextByPartId.delete(partId);
+      context.emittedReasoningTextByPartId.delete(partId);
+    };
+
     /** Emit content.delta and item.completed events for an assistant text part. */
     const emitAssistantTextDelta = Effect.fn("emitAssistantTextDelta")(function* (
       context: OpenCodeSessionContext,
@@ -758,6 +764,10 @@ export function makeOpenCodeAdapter(
     ) {
       const text = textFromPart(part);
       if (text === undefined) {
+        return;
+      }
+
+      if (context.completedAssistantPartIds.has(part.id)) {
         return;
       }
 
@@ -842,6 +852,7 @@ export function makeOpenCodeAdapter(
                   : {}),
               },
             });
+            clearAssistantTextCaches(context, part.id);
           }
           return;
         }
@@ -887,6 +898,7 @@ export function makeOpenCodeAdapter(
             ...(latestText.length > 0 ? { detail: latestText } : {}),
           },
         });
+        clearAssistantTextCaches(context, part.id);
       }
     });
 
