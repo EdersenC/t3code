@@ -93,7 +93,9 @@ export interface ThreadComposerProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
-  readonly onSendMessage: () => Promise<MessageId | null>;
+  readonly onSendMessage: (options?: {
+    readonly textOverride?: string;
+  }) => Promise<MessageId | null>;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
@@ -481,11 +483,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const handleSend = useCallback(() => {
     const standaloneSlashCommand =
       draftAttachments.length === 0 ? parseStandaloneComposerSlashCommand(draftMessage) : null;
-    if (standaloneSlashCommand) {
-      if (standaloneSlashCommand !== "clear") {
-        onUpdateInteractionMode(standaloneSlashCommand);
-      }
+    if (standaloneSlashCommand === "plan" || standaloneSlashCommand === "default") {
+      onUpdateInteractionMode(standaloneSlashCommand);
       clearDraft();
+      return;
+    }
+    if (standaloneSlashCommand === "clear") {
+      clearDraft();
+      return;
+    }
+    if (standaloneSlashCommand === "compact") {
+      void onSendMessage({ textOverride: "/compact" });
       return;
     }
     void onSendMessage();

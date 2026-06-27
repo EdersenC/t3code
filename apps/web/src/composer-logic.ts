@@ -257,13 +257,14 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Extract<ComposerSlashCommand, "plan" | "default" | "clear"> | null {
-  const match = /^\/(plan|default|clear)\s*$/i.exec(text.trim());
+): Extract<ComposerSlashCommand, "plan" | "default" | "compact" | "clear"> | null {
+  const match = /^\/(plan|default|compact|clear)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
   }
   const command = match[1]?.toLowerCase();
   if (command === "plan") return "plan";
+  if (command === "compact") return "compact";
   if (command === "clear") return "clear";
   return "default";
 }

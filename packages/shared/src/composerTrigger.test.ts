@@ -53,8 +53,13 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand("/clear")).toBe("clear");
   });
 
-  it("keeps provider-facing commands as regular prompt text", () => {
-    expect(parseStandaloneComposerSlashCommand("/compact")).toBeNull();
+  it("parses standalone provider control commands", () => {
+    expect(parseStandaloneComposerSlashCommand("/compact")).toBe("compact");
+    expect(parseStandaloneComposerSlashCommand("/compact ")).toBe("compact");
+  });
+
+  it("keeps slash commands with message text as regular prompt text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/compact explain first")).toBeNull();
   });
 });

@@ -22,6 +22,7 @@ interface NewThreadHandler {
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      forceNewDraft?: boolean;
     },
   ): Promise<void>;
 }
@@ -87,6 +88,21 @@ export async function startNewThreadFromContext(
   }
 
   await startNewThreadInProjectFromContext(context, projectRef);
+  return true;
+}
+
+export async function startFreshThreadFromContext(
+  context: ChatThreadActionContext,
+): Promise<boolean> {
+  const projectRef = resolveThreadActionProjectRef(context);
+  if (!projectRef) {
+    return false;
+  }
+
+  await context.handleNewThread(projectRef, {
+    ...buildContextualThreadOptions(context),
+    forceNewDraft: true,
+  });
   return true;
 }
 

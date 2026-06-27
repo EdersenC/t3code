@@ -984,7 +984,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           type: "slash-command",
           command: "clear",
           label: "/clear",
-          description: "Clear the current draft",
+          description: "Start a fresh thread",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
@@ -1632,10 +1632,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
-        if (item.command === "clear") {
-          clearCurrentComposerDraft();
-          return;
-        }
         const replacement = `/${item.command} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
@@ -2092,7 +2088,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       environmentUnavailable,
       activePendingProgress,
       applyPromptReplacement,
-      clearCurrentComposerDraft,
       isComposerModelPickerOpen,
       readComposerSnapshot,
       selectedModel,
