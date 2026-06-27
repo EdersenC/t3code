@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fix CI"
+  short_description: "Fix failing tests, builds, and checks"
+  default_prompt: "Use $fix-ci to diagnose the failing check and make it pass."

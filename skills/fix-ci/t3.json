@@ -1,0 +1,9 @@
+{
+  "displayName": "Fix CI",
+  "shortDescription": "Fix failing tests, builds, and checks",
+  "slashCommand": {
+    "name": "fix-ci",
+    "description": "Diagnose and fix failing checks",
+    "inputHint": "failing command or log snippet"
+  }
+}

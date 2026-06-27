@@ -53,6 +53,25 @@ describe("ServerProvider", () => {
     expect(parsed.versionAdvisory?.canUpdate).toBe(false);
   });
 
+  it("decodes slash command scope metadata", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "codex",
+      driver: "codex",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      slashCommands: [{ name: "review", scope: "repo" }],
+    });
+
+    expect(parsed.slashCommands[0]?.scope).toBe("repo");
+  });
+
   it("decodes continuation group metadata", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex_personal",

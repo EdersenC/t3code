@@ -54,6 +54,7 @@ import {
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
+import { enrichProviderWithRepoSkills, loadRepoSkillCatalog } from "../repoSkills.ts";
 
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
@@ -191,6 +192,17 @@ export const ProviderRegistryLive = Layer.effect(
     const config = yield* ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const repoSkillCatalog = yield* loadRepoSkillCatalog(path.join(config.cwd, "skills")).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+    if (repoSkillCatalog.diagnostics.length > 0) {
+      yield* Effect.logWarning("Repo skill catalog loaded with diagnostics.", {
+        diagnostics: repoSkillCatalog.diagnostics,
+      });
+    }
+    const enrichProvider = (provider: ServerProvider) =>
+      enrichProviderWithRepoSkills(provider, repoSkillCatalog);
 
     // Aggregator PubSub — consumers (WS gateway, etc.) subscribe here for
     // coalesced updates across every instance.
@@ -266,7 +278,9 @@ export const ProviderRegistryLive = Layer.effect(
         ),
       ),
     );
-    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(cachedProviders);
+    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
+      cachedProviders.map(enrichProvider),
+    );
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
@@ -330,8 +344,9 @@ export const ProviderRegistryLive = Layer.effect(
         readonly replace?: boolean;
       },
     ) {
+      const enrichedNextProviders = nextProviders.map(enrichProvider);
       const nextProvidersWithUpdateState = yield* Effect.forEach(
-        nextProviders,
+        enrichedNextProviders,
         applyProviderUpdateState,
         {
           concurrency: "unbounded",

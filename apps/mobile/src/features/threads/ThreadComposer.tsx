@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   detectComposerTrigger,
+  parseStandaloneComposerSlashCommand,
   replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
@@ -326,6 +327,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           label: "/default",
           description: "Switch to default mode",
         },
+        {
+          id: "cmd:compact",
+          type: "slash-command" as const,
+          command: "compact",
+          label: "/compact",
+          description: "Ask the provider to compact context",
+        },
+        {
+          id: "cmd:clear",
+          type: "slash-command" as const,
+          command: "clear",
+          label: "/clear",
+          description: "Clear the current draft",
+        },
       ];
       const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
 
@@ -445,11 +460,36 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
 
   // ── Handle command selection ──────────────────────────────
-  const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
+  const {
+    onChangeDraftMessage,
+    onRemoveDraftImage,
+    onUpdateInteractionMode,
+    draftAttachments,
+    draftMessage,
+    onSendMessage,
+  } = props;
+
+  const clearDraft = useCallback(() => {
+    for (const attachment of draftAttachments) {
+      onRemoveDraftImage(attachment.id);
+    }
+    setPreviewImageUri(null);
+    setComposerSelection({ start: 0, end: 0 });
+    onChangeDraftMessage("");
+  }, [draftAttachments, onChangeDraftMessage, onRemoveDraftImage]);
 
   const handleSend = useCallback(() => {
+    const standaloneSlashCommand =
+      draftAttachments.length === 0 ? parseStandaloneComposerSlashCommand(draftMessage) : null;
+    if (standaloneSlashCommand) {
+      if (standaloneSlashCommand !== "clear") {
+        onUpdateInteractionMode(standaloneSlashCommand);
+      }
+      clearDraft();
+      return;
+    }
     void onSendMessage();
-  }, [onSendMessage]);
+  }, [clearDraft, draftAttachments.length, draftMessage, onSendMessage, onUpdateInteractionMode]);
   const handleCommandSelect = useCallback(
     (item: ComposerCommandItem) => {
       if (!composerTrigger) return;
@@ -467,6 +507,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         setComposerSelection({ start: result.cursor, end: result.cursor });
         onChangeDraftMessage(result.text);
         onUpdateInteractionMode(item.command);
+        return;
+      }
+
+      if (item.type === "slash-command" && item.command === "clear") {
+        clearDraft();
         return;
       }
 
@@ -490,7 +535,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       setComposerSelection({ start: result.cursor, end: result.cursor });
       onChangeDraftMessage(result.text);
     },
-    [composerTrigger, draftMessage, onChangeDraftMessage, onUpdateInteractionMode],
+    [clearDraft, composerTrigger, draftMessage, onChangeDraftMessage, onUpdateInteractionMode],
   );
 
   // ── Model menu ───────────────────────────────────────────

@@ -1,0 +1,9 @@
+{
+  "displayName": "Frontend Design",
+  "shortDescription": "Build polished responsive interfaces",
+  "slashCommand": {
+    "name": "ui",
+    "description": "Apply frontend design guidance",
+    "inputHint": "screen, flow, or component to build"
+  }
+}

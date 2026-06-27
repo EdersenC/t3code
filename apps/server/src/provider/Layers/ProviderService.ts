@@ -23,13 +23,16 @@ import {
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
@@ -48,13 +51,21 @@ import {
 import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
+import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
+import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import {
+  emptyRepoSkillCatalog,
+  expandRepoSkillPrompt,
+  loadRepoSkillCatalog,
+  type RepoSkillCatalog,
+} from "../repoSkills.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -64,6 +75,8 @@ const isModelSelection = Schema.is(ModelSelection);
  */
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
+  readonly repoSkillCatalog?: RepoSkillCatalog;
+  readonly repoSkillProviderSnapshots?: Effect.Effect<ReadonlyArray<ServerProvider>>;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -204,6 +217,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 ) {
   const analytics = yield* Effect.service(AnalyticsService.AnalyticsService);
   const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+  const repoSkillCatalog = options?.repoSkillCatalog ?? emptyRepoSkillCatalog();
+  const repoSkillProviderSnapshots =
+    options?.repoSkillProviderSnapshots ?? Effect.succeed([] as ReadonlyArray<ServerProvider>);
   // Options-provided logger wins (test overrides); otherwise we take whatever
   // the `ProviderEventLoggers` tag exposes — `undefined` means "no canonical
   // log writer is attached", which downstream code already handles as a
@@ -675,11 +691,32 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       metricProvider = routed.adapter.provider;
       metricModel = input.modelSelection?.model;
+      const repoSkillProviderSnapshot = yield* repoSkillProviderSnapshots.pipe(
+        Effect.map((providers) =>
+          providers.find((provider) => provider.instanceId === routed.instanceId),
+        ),
+      );
+      const expandedInput = expandRepoSkillPrompt({
+        input: input.input,
+        catalog: repoSkillCatalog,
+        provider: repoSkillProviderSnapshot,
+      });
+      const providerInput =
+        expandedInput === input.input
+          ? input
+          : {
+              ...(yield* decodeInputOrValidationError({
+                operation: "ProviderService.sendTurn",
+                schema: ProviderSendTurnInput,
+                payload: { ...input, input: expandedInput },
+              })),
+              attachments: input.attachments,
+            };
       yield* Effect.annotateCurrentSpan({
         "provider.kind": routed.adapter.provider,
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
       });
-      const turn = yield* routed.adapter.sendTurn(input);
+      const turn = yield* routed.adapter.sendTurn(providerInput);
       yield* directory.upsert({
         threadId: input.threadId,
         provider: routed.adapter.provider,
@@ -698,7 +735,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         model: input.modelSelection?.model,
         interactionMode: input.interactionMode,
         attachmentCount: input.attachments.length,
-        hasInput: typeof input.input === "string" && input.input.trim().length > 0,
+        hasInput: typeof providerInput.input === "string" && providerInput.input.trim().length > 0,
       });
       return turn;
     }).pipe(
@@ -1088,9 +1125,32 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   } satisfies ProviderService.ProviderService["Service"];
 });
 
+const loadConfiguredRepoSkillCatalog = Effect.gen(function* () {
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const repoSkillCatalog = yield* loadRepoSkillCatalog(path.join(serverConfig.cwd, "skills")).pipe(
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(Path.Path, path),
+  );
+  if (repoSkillCatalog.diagnostics.length > 0) {
+    yield* Effect.logWarning("Repo skill catalog loaded with diagnostics.", {
+      diagnostics: repoSkillCatalog.diagnostics,
+    });
+  }
+  return repoSkillCatalog;
+});
+
 export const ProviderServiceLive = Layer.effect(
   ProviderService.ProviderService,
-  makeProviderService(),
+  Effect.gen(function* () {
+    const repoSkillCatalog = yield* loadConfiguredRepoSkillCatalog;
+    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+    return yield* makeProviderService({
+      repoSkillCatalog,
+      repoSkillProviderSnapshots: providerRegistry.getProviders,
+    });
+  }),
 );
 
 export function makeProviderServiceLive(options?: ProviderServiceLiveOptions) {

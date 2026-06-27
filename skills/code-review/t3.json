@@ -1,0 +1,9 @@
+{
+  "displayName": "Code Review",
+  "shortDescription": "Review changes for bugs and regressions",
+  "slashCommand": {
+    "name": "review",
+    "description": "Review the current changes for bugs and regressions",
+    "inputHint": "optional focus area"
+  }
+}

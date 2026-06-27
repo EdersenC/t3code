@@ -646,6 +646,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
   );
+  const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
   );
@@ -970,6 +971,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           command: "default",
           label: "/default",
           description: "Switch this thread back to normal build mode",
+        },
+        {
+          id: "slash:compact",
+          type: "slash-command",
+          command: "compact",
+          label: "/compact",
+          description: "Ask the provider to compact the conversation context",
+        },
+        {
+          id: "slash:clear",
+          type: "slash-command",
+          command: "clear",
+          label: "/clear",
+          description: "Clear the current draft",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
@@ -1516,6 +1531,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
+  const clearCurrentComposerDraft = useCallback(() => {
+    promptRef.current = "";
+    const activePendingQuestion = activePendingProgress?.activeQuestion;
+    if (activePendingQuestion && activePendingUserInput) {
+      onChangeActivePendingUserInputCustomAnswer(activePendingQuestion.id, "", 0, 0, false);
+    } else {
+      clearComposerDraftContent(composerDraftTarget);
+    }
+    setComposerCursor(0);
+    setComposerTrigger(null);
+    setComposerHighlightedItemId(null);
+    window.requestAnimationFrame(() => {
+      composerEditorRef.current?.focusAt(0);
+    });
+  }, [
+    activePendingProgress?.activeQuestion,
+    activePendingUserInput,
+    clearComposerDraftContent,
+    composerDraftTarget,
+    onChangeActivePendingUserInputCustomAnswer,
+    promptRef,
+  ]);
+
   const readComposerSnapshot = useCallback((): {
     value: string;
     cursor: number;
@@ -1584,10 +1622,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
-        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
-        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
-        });
+        if (item.command === "plan" || item.command === "default") {
+          void handleInteractionModeChange(item.command);
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        if (item.command === "clear") {
+          clearCurrentComposerDraft();
+          return;
+        }
+        const replacement = `/${item.command} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
         if (applied) {
           setComposerHighlightedItemId(null);
         }
@@ -1630,7 +1690,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
     },
-    [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
+    [
+      applyPromptReplacement,
+      clearCurrentComposerDraft,
+      handleInteractionModeChange,
+      resolveActiveComposerTrigger,
+    ],
   );
 
   const onComposerMenuItemHighlighted = useCallback(
@@ -2027,6 +2092,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       environmentUnavailable,
       activePendingProgress,
       applyPromptReplacement,
+      clearCurrentComposerDraft,
       isComposerModelPickerOpen,
       readComposerSnapshot,
       selectedModel,
