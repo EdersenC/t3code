@@ -39,6 +39,23 @@ Long term maintainability is a core priority. If you add new functionality, firs
 
 Use these as implementation references when designing protocol handling, UX flows, and operational safeguards.
 
+## Local Model And vLLM Work
+
+- Treat local-model work as a reproducible product surface, not a one-machine setup. The app should
+  be able to guide a user through choosing cache/model locations, installing or connecting to the
+  runtime, downloading/registering models, and reproducing the setup on another machine.
+- Keep model storage, runtime cache, and temporary IPC/runtime directories configurable. Large model
+  artifacts can live on external or mounted drives, but runtime sockets/temp files should stay on a
+  native Linux filesystem when running under WSL.
+- Design the future local-model experience as a hub: model downloads, local path registration,
+  source/runtime tags, health checks, start/stop controls, GPU/VRAM checks, maintenance actions, and
+  portable export/import should be first-class concepts.
+- Before implementing the local-model hub UI or workflow, pause and ask the user product-structure
+  questions. Do not silently choose between a provider tab, dedicated Local Models tab, one-server
+  versus multi-server management, download strategy, metadata priorities, and cleanup policy.
+- Keep Docker/containerization in mind. Avoid hard-coding host-specific paths or assumptions that
+  would make the vLLM provider impossible to run in a future containerized setup.
+
 ## Vendored Repositories
 
 This project vendors external repositories under `.repos/` as read-only reference material for coding
