@@ -6,9 +6,12 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderModelRuntimeSource,
 } from "@t3tools/contracts";
 import {
   createModelSelection,
+  getOllamaModelDisplayName,
+  getOllamaModelRuntimeSource,
   normalizeModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
@@ -28,6 +31,7 @@ import { sortModelsForProviderInstance } from "./modelOrdering";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 const DEFAULT_TEXT_GENERATION_INSTANCE_ID = ProviderInstanceId.make("codex");
+const OLLAMA_DRIVER_KIND = ProviderDriverKind.make("ollama");
 
 /**
  * Resolve the custom-model list for a given instance, preferring the
@@ -74,6 +78,7 @@ export interface AppModelOption {
   name: string;
   shortName?: string;
   subProvider?: string;
+  runtimeSource?: ServerProviderModelRuntimeSource;
   isCustom: boolean;
 }
 
@@ -85,6 +90,23 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   };
   if (model.shortName) option.shortName = model.shortName;
   if (model.subProvider) option.subProvider = model.subProvider;
+  if (model.runtimeSource) option.runtimeSource = model.runtimeSource;
+  return option;
+}
+
+function toCustomAppModelOption(slug: string, driverKind: ProviderDriverKind): AppModelOption {
+  const option: AppModelOption = {
+    slug,
+    name: driverKind === OLLAMA_DRIVER_KIND ? (getOllamaModelDisplayName(slug) ?? slug) : slug,
+    isCustom: true,
+  };
+
+  if (driverKind === OLLAMA_DRIVER_KIND) {
+    const runtimeSource = getOllamaModelRuntimeSource(slug);
+    option.runtimeSource = runtimeSource;
+    option.subProvider = runtimeSource === "cloud" ? "Cloud" : "Local";
+  }
+
   return option;
 }
 
@@ -169,11 +191,7 @@ export function getAppModelOptions(
     }
 
     seen.add(slug);
-    options.push({
-      slug,
-      name: slug,
-      isCustom: true,
-    });
+    options.push(toCustomAppModelOption(slug, provider));
   }
 
   return applyInstanceModelPreferences(
@@ -213,7 +231,7 @@ export function getAppModelOptionsForInstance(
     }
 
     seen.add(slug);
-    options.push({ slug, name: slug, isCustom: true });
+    options.push(toCustomAppModelOption(slug, entry.driverKind));
   }
 
   return applyInstanceModelPreferences(

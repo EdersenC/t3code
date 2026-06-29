@@ -1553,7 +1553,10 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
 }) {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
-  const [expanded, setExpanded] = useState(false);
+  const isRuntimeDiagnostic =
+    workEntry.sourceActivityKind === "runtime.error" ||
+    workEntry.sourceActivityKind === "runtime.warning";
+  const [expanded, setExpanded] = useState(isRuntimeDiagnostic);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
@@ -1693,11 +1696,30 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       </div>
       {expanded && canExpand && expandedBody ? (
         <div
-          className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
+          className={cn(
+            "mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5",
+            isRuntimeDiagnostic &&
+              "rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5 ps-2",
+          )}
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
+          {isRuntimeDiagnostic ? (
+            <div className="mb-1 flex justify-end">
+              <MessageCopyButton
+                text={expandedBody}
+                size="icon-xs"
+                variant="ghost"
+                className="h-5 w-5 text-destructive/70 hover:text-destructive"
+              />
+            </div>
+          ) : null}
+          <pre
+            className={cn(
+              "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text",
+              isRuntimeDiagnostic && "text-destructive/90",
+            )}
+          >
             {expandedBody}
           </pre>
         </div>

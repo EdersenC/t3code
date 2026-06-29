@@ -818,6 +818,55 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
+  it("uses runtime error payload message as the work log detail", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "groq-runtime-error",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "runtime.error",
+        summary: "Runtime error",
+        tone: "error",
+        payload: {
+          message:
+            "Groq model 'allam-2-7b' failed while answering. Details: max_tokens must be <= 4096",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries[0]).toMatchObject({
+      id: "groq-runtime-error",
+      label: "Runtime error",
+      detail: "Groq model 'allam-2-7b' failed while answering. Details: max_tokens must be <= 4096",
+      tone: "error",
+      sourceActivityKind: "runtime.error",
+    });
+  });
+
+  it("uses runtime error structured detail when the payload has no message", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "groq-runtime-detail",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "runtime.error",
+        summary: "Runtime error",
+        tone: "error",
+        payload: {
+          detail: {
+            type: "session.error",
+            error: {
+              message: "Request too large on tokens per minute (TPM)",
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries[0]?.detail).toContain("Request too large on tokens per minute");
+    expect(entries[0]?.detail).toContain('"type": "session.error"');
+  });
+
   it("omits ExitPlanMode lifecycle entries once the plan card is shown", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

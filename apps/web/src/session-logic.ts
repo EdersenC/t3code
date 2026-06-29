@@ -57,6 +57,12 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  {
+    value: ProviderDriverKind.make("groq"),
+    label: "Groq",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
 ];
 
 export type WorkLogToolLifecycleStatus =
@@ -701,6 +707,14 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
+  const runtimeMessage =
+    activity.kind === "runtime.error" || activity.kind === "runtime.warning"
+      ? asTrimmedString(payload?.message)
+      : null;
+  const runtimeDetail =
+    activity.kind === "runtime.error" || activity.kind === "runtime.warning"
+      ? stringifyDiagnosticDetail(payload?.detail)
+      : null;
   const detail = isTaskActivity
     ? !taskDetailAsLabel &&
       payload &&
@@ -708,7 +722,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       payload.detail.length > 0
       ? stripTrailingExitCode(payload.detail).output
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
+    : runtimeMessage
+      ? runtimeMessage
+      : runtimeDetail
+        ? runtimeDetail
+        : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
@@ -894,6 +912,21 @@ function asTrimmedString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function stringifyDiagnosticDetail(value: unknown): string | null {
+  const direct = asTrimmedString(value);
+  if (direct) {
+    return direct;
+  }
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function asNumber(value: unknown): number | null {

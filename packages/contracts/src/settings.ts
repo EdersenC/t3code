@@ -5,6 +5,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL,
+  DEFAULT_GROQ_MODEL,
   DEFAULT_OLLAMA_MODEL,
   ProviderOptionSelections,
 } from "./model.ts";
@@ -435,6 +436,58 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
+export const DEFAULT_GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+
+export const GroqSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    apiKey: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "API key",
+        description: "Groq API key. Can be left blank when GROQ_API_KEY is set.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "gsk_...",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    baseUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_GROQ_BASE_URL)),
+      Schema.annotateKey({
+        title: "Base URL",
+        description: "OpenAI-compatible Groq endpoint.",
+        providerSettingsForm: {
+          placeholder: DEFAULT_GROQ_BASE_URL,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    binaryPath: makeBinaryPathSetting("opencode").pipe(
+      Schema.annotateKey({
+        title: "OpenCode binary path",
+        description: "Path to the OpenCode binary used as the Groq harness.",
+        providerSettingsForm: {
+          placeholder: "opencode",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([DEFAULT_GROQ_MODEL])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["apiKey", "baseUrl", "binaryPath"],
+  },
+);
+export type GroqSettings = typeof GroqSettings.Type;
+
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -538,6 +591,21 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const LocalModelRuntimeKind = Schema.Literals([
+  "vllm",
+  "llamacpp",
+  "tgi",
+  "lmstudio",
+  "custom",
+]);
+export type LocalModelRuntimeKind = typeof LocalModelRuntimeKind.Type;
+
+export const LocalModelRuntimeSettings = Schema.Struct({
+  preferredRuntime: LocalModelRuntimeKind.pipe(Schema.withDecodingDefault(Effect.succeed("vllm"))),
+  notes: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type LocalModelRuntimeSettings = typeof LocalModelRuntimeSettings.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -575,6 +643,7 @@ export const ServerSettings = Schema.Struct({
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    groq: GroqSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     ollama: OllamaSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -587,6 +656,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  localModelRuntime: LocalModelRuntimeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -671,6 +741,14 @@ const GrokSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const GroqSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 const OpenCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -696,6 +774,12 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  localModelRuntime: Schema.optionalKey(
+    Schema.Struct({
+      preferredRuntime: Schema.optionalKey(LocalModelRuntimeKind),
+      notes: Schema.optionalKey(TrimmedString),
+    }),
+  ),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
@@ -708,6 +792,7 @@ export const ServerSettingsPatch = Schema.Struct({
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
+      groq: Schema.optionalKey(GroqSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       ollama: Schema.optionalKey(OllamaSettingsPatch),
     }),

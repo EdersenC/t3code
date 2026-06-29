@@ -95,6 +95,14 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const LOCAL_MODEL_RUNTIME_LABELS = {
+  vllm: "vLLM",
+  llamacpp: "llama.cpp",
+  tgi: "TGI",
+  lmstudio: "LM Studio",
+  custom: "Custom",
+} as const;
+
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 function withoutProviderInstanceKey<V>(
@@ -436,6 +444,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Delete confirmation"]
         : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
+      ...(!Equal.equals(settings.localModelRuntime, DEFAULT_UNIFIED_SETTINGS.localModelRuntime)
+        ? ["Local model runtime"]
+        : []),
     ],
     [
       isGitWritingModelDirty,
@@ -453,6 +464,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableAssistantStreaming,
       settings.interfaceContrast,
       settings.interfaceDensity,
+      settings.localModelRuntime,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.uiAccentColor,
@@ -502,6 +514,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+      localModelRuntime: DEFAULT_UNIFIED_SETTINGS.localModelRuntime,
     });
     onRestored?.();
   }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
@@ -950,6 +963,112 @@ export function GeneralSettingsPanel() {
                 }}
               />
             </div>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Local Models">
+        <SettingsRow
+          title="Runtime hub"
+          description="Planned control plane for vLLM, Hugging Face/open-weight downloads, local VLMs, and AMD GPU profiles."
+          resetAction={
+            !Equal.equals(
+              settings.localModelRuntime.preferredRuntime,
+              DEFAULT_UNIFIED_SETTINGS.localModelRuntime.preferredRuntime,
+            ) ? (
+              <SettingResetButton
+                label="local model runtime"
+                onClick={() =>
+                  updateSettings({
+                    localModelRuntime: {
+                      ...settings.localModelRuntime,
+                      preferredRuntime: DEFAULT_UNIFIED_SETTINGS.localModelRuntime.preferredRuntime,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.localModelRuntime.preferredRuntime}
+              onValueChange={(value) => {
+                if (
+                  value === "vllm" ||
+                  value === "llamacpp" ||
+                  value === "tgi" ||
+                  value === "lmstudio" ||
+                  value === "custom"
+                ) {
+                  updateSettings({
+                    localModelRuntime: {
+                      ...settings.localModelRuntime,
+                      preferredRuntime: value,
+                    },
+                  });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Preferred local runtime">
+                <SelectValue>
+                  {LOCAL_MODEL_RUNTIME_LABELS[settings.localModelRuntime.preferredRuntime]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="vllm">
+                  {LOCAL_MODEL_RUNTIME_LABELS.vllm}
+                </SelectItem>
+                <SelectItem hideIndicator value="llamacpp">
+                  {LOCAL_MODEL_RUNTIME_LABELS.llamacpp}
+                </SelectItem>
+                <SelectItem hideIndicator value="tgi">
+                  {LOCAL_MODEL_RUNTIME_LABELS.tgi}
+                </SelectItem>
+                <SelectItem hideIndicator value="lmstudio">
+                  {LOCAL_MODEL_RUNTIME_LABELS.lmstudio}
+                </SelectItem>
+                <SelectItem hideIndicator value="custom">
+                  {LOCAL_MODEL_RUNTIME_LABELS.custom}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Runtime notes"
+          description="Capture model, quantization, GPU, and serving notes before a runnable local runtime is enabled."
+          resetAction={
+            settings.localModelRuntime.notes !==
+            DEFAULT_UNIFIED_SETTINGS.localModelRuntime.notes ? (
+              <SettingResetButton
+                label="local runtime notes"
+                onClick={() =>
+                  updateSettings({
+                    localModelRuntime: {
+                      ...settings.localModelRuntime,
+                      notes: DEFAULT_UNIFIED_SETTINGS.localModelRuntime.notes,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-full sm:w-80"
+              value={settings.localModelRuntime.notes}
+              onCommit={(next) =>
+                updateSettings({
+                  localModelRuntime: {
+                    ...settings.localModelRuntime,
+                    notes: next,
+                  },
+                })
+              }
+              placeholder="vLLM first; track VRAM, context, quantization, and VLM needs"
+              spellCheck={false}
+              aria-label="Local runtime notes"
+            />
           }
         />
       </SettingsSection>

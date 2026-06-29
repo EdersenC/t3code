@@ -12,12 +12,15 @@ import {
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
+  getOllamaModelDisplayName,
+  getOllamaModelRuntimeSource,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
   isClaudeUltrathinkPrompt,
+  isOllamaCloudModelId,
   normalizeModelSlug,
   resolveModelSlugForProvider,
   resolveSelectableModel,
@@ -91,6 +94,18 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("llama3.2:3b", ollama)).toBe("ollama/llama3.2:3b");
     expect(normalizeModelSlug(" ollama/qwen2.5-coder:7b ", ollama)).toBe("ollama/qwen2.5-coder:7b");
     expect(normalizeModelSlug("hf.co/example/model", ollama)).toBe("ollama/hf.co/example/model");
+  });
+
+  it("detects Ollama cloud suffixes without changing routing slugs", () => {
+    expect(isOllamaCloudModelId("ollama/qwen3:cloud")).toBe(true);
+    expect(isOllamaCloudModelId("gpt-oss-120b-cloud")).toBe(true);
+    expect(isOllamaCloudModelId("llama3.2:3b")).toBe(false);
+    expect(getOllamaModelDisplayName("ollama/qwen3:cloud")).toBe("qwen3");
+    expect(getOllamaModelDisplayName("ollama/gpt-oss-120b-cloud")).toBe("gpt-oss-120b");
+    expect(getOllamaModelRuntimeSource("gpt-oss-120b-cloud")).toBe("cloud");
+    expect(normalizeModelSlug("gpt-oss-120b-cloud", ProviderDriverKind.make("ollama"))).toBe(
+      "ollama/gpt-oss-120b-cloud",
+    );
   });
 });
 
