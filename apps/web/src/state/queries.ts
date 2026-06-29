@@ -6,7 +6,9 @@ import {
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
+  OrchestrationModelAnalyticsRollup,
   OrchestrationThread,
+  ProjectId,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
@@ -19,7 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
-import { useEnvironmentQuery } from "./query";
+import { type EnvironmentQueryView, useEnvironmentQuery } from "./query";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 
@@ -62,6 +64,20 @@ export function useThreadDetail(
     isPending: state.status === "synchronizing",
     isDeleted: state.status === "deleted",
   };
+}
+
+export function useProjectModelAnalytics(
+  environmentId: EnvironmentId | null,
+  projectId: ProjectId | null,
+): EnvironmentQueryView<OrchestrationModelAnalyticsRollup> {
+  return useEnvironmentQuery(
+    environmentId !== null && projectId !== null
+      ? orchestrationEnvironment.projectModelAnalytics({
+          environmentId,
+          input: { projectId },
+        })
+      : null,
+  );
 }
 
 export function useBranches(target: VcsRefTarget) {

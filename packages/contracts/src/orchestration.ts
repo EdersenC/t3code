@@ -26,6 +26,7 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getProjectModelAnalytics: "orchestration.getProjectModelAnalytics",
   replayEvents: "orchestration.replayEvents",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
@@ -1210,6 +1211,22 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
 
+export const OrchestrationProjectModelAnalyticsInput = Schema.Struct({
+  projectId: ProjectId,
+});
+export type OrchestrationProjectModelAnalyticsInput =
+  typeof OrchestrationProjectModelAnalyticsInput.Type;
+
+export const OrchestrationModelAnalyticsRollup = Schema.Struct({
+  turnCount: NonNegativeInt,
+  inputTokens: NonNegativeInt,
+  outputTokens: NonNegativeInt,
+  totalTokens: NonNegativeInt,
+  durationMs: Schema.NullOr(NonNegativeInt),
+  tokensPerSecond: Schema.NullOr(Schema.Number),
+});
+export type OrchestrationModelAnalyticsRollup = typeof OrchestrationModelAnalyticsRollup.Type;
+
 export const OrchestrationReplayEventsInput = Schema.Struct({
   fromSequenceExclusive: NonNegativeInt,
 });
@@ -1230,6 +1247,10 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  getProjectModelAnalytics: {
+    input: OrchestrationProjectModelAnalyticsInput,
+    output: OrchestrationModelAnalyticsRollup,
   },
   replayEvents: {
     input: OrchestrationReplayEventsInput,

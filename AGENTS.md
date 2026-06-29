@@ -41,6 +41,9 @@ Use these as implementation references when designing protocol handling, UX flow
 
 ## Local Model And vLLM Work
 
+- Read `docs/architecture/local-model-hub.md` before implementing Local Model Hub behavior. Keep
+  that architecture note and provider notes such as `docs/providers/vllm.md` and
+  `docs/providers/ollama.md` in sync when decisions change.
 - Treat local-model work as a reproducible product surface, not a one-machine setup. The app should
   be able to guide a user through choosing cache/model locations, installing or connecting to the
   runtime, downloading/registering models, and reproducing the setup on another machine.
@@ -50,9 +53,9 @@ Use these as implementation references when designing protocol handling, UX flow
 - Design the future local-model experience as a hub: model downloads, local path registration,
   source/runtime tags, health checks, start/stop controls, GPU/VRAM checks, maintenance actions, and
   portable export/import should be first-class concepts.
-- Before implementing the local-model hub UI or workflow, pause and ask the user product-structure
-  questions. Do not silently choose between a provider tab, dedicated Local Models tab, one-server
-  versus multi-server management, download strategy, metadata priorities, and cleanup policy.
+- Current hub direction is a sidebar entry with its own main page. V1 should focus on Hugging Face
+  and Ollama model inventory, metadata, downloads, and configurable storage roots; leave runtime
+  launch controls for later phases unless the task explicitly asks for them.
 - Keep Docker/containerization in mind. Avoid hard-coding host-specific paths or assumptions that
   would make the vLLM provider impossible to run in a future containerized setup.
 

@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { PositiveInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL,
   DEFAULT_GROQ_MODEL,
@@ -17,6 +17,9 @@ import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.t
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
+
+export const DEFAULT_LOCAL_CONTEXT_WINDOW = 4096;
+export const DEFAULT_LOCAL_OUTPUT_TOKEN_LIMIT = 256;
 
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
@@ -245,7 +248,7 @@ const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
-export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch";
+export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch" | "number";
 
 export interface ProviderSettingsFormAnnotation {
   readonly control?: ProviderSettingsFormControl | undefined;
@@ -585,6 +588,70 @@ export const OllamaSettings = makeProviderSettingsSchema(
 );
 export type OllamaSettings = typeof OllamaSettings.Type;
 
+export const LocalSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    baseUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("http://127.0.0.1:8018")),
+      Schema.annotateKey({
+        title: "vLLM base URL",
+        description: "OpenAI-compatible vLLM server URL used by this Local instance.",
+        providerSettingsForm: {
+          placeholder: "http://127.0.0.1:8018",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    binaryPath: makeBinaryPathSetting("opencode").pipe(
+      Schema.annotateKey({
+        title: "OpenCode binary path",
+        description: "Path to the OpenCode binary used as the Local model harness.",
+        providerSettingsForm: {
+          placeholder: "opencode",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    contextWindow: PositiveInt.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_LOCAL_CONTEXT_WINDOW)),
+      Schema.annotateKey({
+        title: "Context window",
+        description:
+          "Maximum total tokens advertised to OpenCode for Local vLLM models. This should match the vLLM --max-model-len value.",
+        providerSettingsForm: {
+          control: "number",
+          placeholder: String(DEFAULT_LOCAL_CONTEXT_WINDOW),
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    outputTokenLimit: PositiveInt.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_LOCAL_OUTPUT_TOKEN_LIMIT)),
+      Schema.annotateKey({
+        title: "Output token limit",
+        description:
+          "Maximum assistant output tokens advertised to OpenCode for Local vLLM models.",
+        providerSettingsForm: {
+          control: "number",
+          placeholder: String(DEFAULT_LOCAL_OUTPUT_TOKEN_LIMIT),
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+  },
+  {
+    order: ["baseUrl", "binaryPath", "contextWindow", "outputTokenLimit"],
+  },
+);
+export type LocalSettings = typeof LocalSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -646,6 +713,7 @@ export const ServerSettings = Schema.Struct({
     groq: GroqSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     ollama: OllamaSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    local: LocalSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob

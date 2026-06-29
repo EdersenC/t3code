@@ -41,6 +41,7 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
   [ProviderDriverKind.make("groq")]: "groq/openai/gpt-oss-120b",
   [ProviderDriverKind.make("opencode")]: "openai/gpt-5",
   [ProviderDriverKind.make("ollama")]: "ollama/llama3.2:3b",
+  [ProviderDriverKind.make("local")]: "Qwen/Qwen3-8B-AWQ",
 };
 
 interface ProviderModelsSectionProps {

@@ -117,6 +117,12 @@ export function readProviderConfigString(config: unknown, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+export function readProviderConfigNumberInput(config: unknown, key: string): string {
+  if (config === null || typeof config !== "object") return "";
+  const value = (config as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+}
+
 export function readProviderConfigBoolean(
   config: unknown,
   key: string,
@@ -146,6 +152,20 @@ export function nextProviderConfigWithFieldValue(
   }
 
   const trimmed = value.trim();
+  if (field.control === "number") {
+    if (trimmed.length === 0) {
+      if (field.clearWhenEmpty === "omit") delete base[field.key];
+      else base[field.key] = value;
+      return Object.keys(base).length > 0 ? base : undefined;
+    }
+
+    const numericValue = Number(trimmed);
+    if (Number.isFinite(numericValue)) {
+      base[field.key] = numericValue;
+    }
+    return Object.keys(base).length > 0 ? base : undefined;
+  }
+
   if (field.clearWhenEmpty === "omit" && trimmed.length === 0) {
     delete base[field.key];
   } else {
@@ -238,7 +258,12 @@ function ProviderSettingsFieldRow({
     );
   }
 
-  const type = field.control === "password" ? "password" : undefined;
+  const type =
+    field.control === "password" ? "password" : field.control === "number" ? "number" : undefined;
+  const valueText =
+    field.control === "number"
+      ? readProviderConfigNumberInput(value, field.key)
+      : readProviderConfigString(value, field.key);
   return (
     <FieldFrame variant={variant}>
       <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
@@ -249,7 +274,7 @@ function ProviderSettingsFieldRow({
             className="mt-1.5"
             type={type}
             autoComplete={field.control === "password" ? "off" : undefined}
-            value={readProviderConfigString(value, field.key)}
+            value={valueText}
             onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
             placeholder={field.placeholder}
             spellCheck={false}
@@ -260,7 +285,7 @@ function ProviderSettingsFieldRow({
             className="bg-background"
             type={type}
             autoComplete={field.control === "password" ? "off" : undefined}
-            value={readProviderConfigString(value, field.key)}
+            value={valueText}
             onChange={(event) =>
               onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
             }

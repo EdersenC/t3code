@@ -134,11 +134,18 @@ const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const GROQ_DRIVER_KIND = ProviderDriverKind.make("groq");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 const OLLAMA_DRIVER_KIND = ProviderDriverKind.make("ollama");
+const LOCAL_DRIVER_KIND = ProviderDriverKind.make("local");
 
 export const DEFAULT_MODEL = "gpt-5.4";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
 export const DEFAULT_OLLAMA_MODEL = "ollama/llama3.2:3b";
 export const DEFAULT_GROQ_MODEL = "groq/meta-llama/llama-4-scout-17b-16e-instruct";
+export const DEFAULT_LOCAL_MODEL = "local-vllm/Qwen/Qwen2.5-Coder-0.5B-Instruct";
+export const DEFAULT_LOCAL_MODELS = [
+  DEFAULT_LOCAL_MODEL,
+  "local-vllm/Qwen/Qwen3-8B-AWQ",
+  "local-vllm/Qwen/Qwen2.5-Coder-14B-Instruct-AWQ",
+] as const;
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
@@ -148,6 +155,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [GROQ_DRIVER_KIND]: DEFAULT_GROQ_MODEL,
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [OLLAMA_DRIVER_KIND]: DEFAULT_OLLAMA_MODEL,
+  [LOCAL_DRIVER_KIND]: DEFAULT_LOCAL_MODEL,
 };
 
 /** Per-provider text generation model defaults. */
@@ -160,6 +168,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [GROQ_DRIVER_KIND]: DEFAULT_GROQ_MODEL,
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [OLLAMA_DRIVER_KIND]: DEFAULT_OLLAMA_MODEL,
+  [LOCAL_DRIVER_KIND]: DEFAULT_LOCAL_MODEL,
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -205,6 +214,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
   [GROQ_DRIVER_KIND]: {},
   [OPENCODE_DRIVER_KIND]: {},
   [OLLAMA_DRIVER_KIND]: {},
+  [LOCAL_DRIVER_KIND]: {},
 };
 
 // ── Provider display names ────────────────────────────────────────────
@@ -217,4 +227,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [GROQ_DRIVER_KIND]: "Groq",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
   [OLLAMA_DRIVER_KIND]: "Ollama",
+  [LOCAL_DRIVER_KIND]: "Local",
 };

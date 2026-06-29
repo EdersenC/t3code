@@ -4,11 +4,13 @@ import {
   CursorSettings,
   GrokSettings,
   GroqSettings,
+  LocalSettings,
   OllamaSettings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
+import { HardDriveIcon } from "lucide-react";
 import {
   ClaudeAI,
   CursorIcon,
@@ -89,6 +91,13 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "Ollama",
     icon: OllamaIcon,
     settingsSchema: OllamaSettings,
+  },
+  {
+    value: ProviderDriverKind.make("local"),
+    label: "Local",
+    icon: HardDriveIcon,
+    badgeLabel: "vLLM",
+    settingsSchema: LocalSettings,
   },
 ];
 

@@ -156,31 +156,8 @@ needs to route requests.
 
 ## Local Model Hub Direction
 
-The vLLM work should become a reproducible local-model hub, not a one-machine script. Before building
-the hub UI or provider management workflow, pause and ask the user product questions about structure,
-storage, and operations.
-
-The hub should eventually support:
-
-- choosing model/cache locations per machine
-- downloading models from Hugging Face or registering existing local paths
-- showing where each model lives and how much disk it uses
-- starting, stopping, and health-checking vLLM servers
-- showing GPU/VRAM suitability before launch
-- tagging models by runtime (`vLLM`) and source (`Hugging Face`, `Local Path`, future sources)
-- maintenance actions such as prune cache, redownload, refresh metadata, and verify files
-- exporting/importing enough configuration to reproduce the setup on another machine
-- a future Docker/container runtime without changing the provider UX
-
-Question checkpoint before hub implementation:
-
-- Should the settings surface be a provider tab, a dedicated Local Models tab, or both?
-- Should one vLLM server run one selected model, or should T3 manage multiple server instances?
-- Should downloads be initiated by T3 directly, by generated shell commands, or both?
-- Which model metadata matters first: source, license, size, quantization, context, tool support,
-  reasoning support, VRAM estimate, local path?
-- What should be portable config versus machine-local config?
-- How aggressive should T3 be about automatic cleanup and cache pruning?
+The vLLM work should become part of a reproducible local-model hub, not a one-machine script. The
+current product direction is tracked in [Local Model Hub](../architecture/local-model-hub.md).
 
 ## References
 

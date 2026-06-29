@@ -11,6 +11,7 @@ import type {
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
+  OrchestrationModelAnalyticsRollup,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThread,
@@ -106,6 +107,16 @@ export interface ProjectionSnapshotQueryShape {
    * Read aggregate projection counts without hydrating the full read model.
    */
   readonly getCounts: () => Effect.Effect<ProjectionSnapshotCounts, ProjectionRepositoryError>;
+
+  /**
+   * Read model token/throughput analytics across non-deleted project threads.
+   *
+   * Archived threads are retained so the project total represents collected
+   * project history rather than only the currently visible sidebar set.
+   */
+  readonly getProjectModelAnalytics: (
+    projectId: ProjectId,
+  ) => Effect.Effect<OrchestrationModelAnalyticsRollup, ProjectionRepositoryError>;
 
   /**
    * Read the active project for an exact workspace root match.
