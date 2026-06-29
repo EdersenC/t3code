@@ -98,6 +98,123 @@ Hugging Face should preserve revision information when possible. Ollama should d
 models from cloud models, including `:cloud` and `-cloud` naming forms, without hiding the full
 provider ID from the backend.
 
+### Adapter Boundary
+
+The hub should use one source adapter contract for all model sources. The source-specific adapter owns
+remote discovery, access checks, download execution, and local inventory mapping; the page and provider
+binding code should only consume normalized hub records.
+
+Proposed adapter shape:
+
+```ts
+interface LocalModelSourceAdapter {
+  readonly source: "huggingface" | "ollama" | string;
+  search(
+    input: LocalModelSearchInput,
+  ): Effect<ReadonlyArray<LocalModelSearchResult>, LocalModelHubError>;
+  describe(input: LocalModelDescribeInput): Effect<LocalModelMetadata, LocalModelHubError>;
+  listLocal(
+    input: LocalModelInventoryInput,
+  ): Effect<ReadonlyArray<LocalModelRecord>, LocalModelHubError>;
+  download(input: LocalModelDownloadInput): Effect<LocalModelDownloadHandle, LocalModelHubError>;
+  cancel(input: LocalModelDownloadId): Effect<void, LocalModelHubError>;
+  remove(input: LocalModelRemoveInput): Effect<void, LocalModelHubError>;
+  probeAccess(
+    input: LocalModelAccessProbeInput,
+  ): Effect<LocalModelAccessStatus, LocalModelHubError>;
+}
+```
+
+Keep the persisted hub state source-neutral:
+
+- model root and source folders
+- normalized model ID
+- source model ID and revision/digest
+- local path
+- source metadata snapshot
+- current download status
+- last error and raw provider detail
+
+Do not let Hugging Face cache layout, Ollama manifests, or future provider-specific concepts leak
+into the UI data model except as source-specific metadata fields.
+
+## Researched Source Behavior
+
+### Hugging Face
+
+Hugging Face should be the first remote-file source because its official tooling already supports the
+operations the hub needs:
+
+- `HfApi` is the flexible API client for Hub search and model metadata, including token-per-request
+  usage without persisting credentials on disk.
+- `hf download` downloads either one file, selected patterns, or an entire repo.
+- `hf download --local-dir <dir>` creates local metadata under `.cache/huggingface/` and skips
+  already-current files on later runs.
+- `hf download --dry-run` reports which files would be downloaded and an estimated byte count.
+- `hf download --cache-dir <dir>` and `HF_HOME` let T3 keep cache/model artifacts under the selected
+  hub root.
+- `hf cache ls --format json` and `scan_cache_dir()` can support later inventory/maintenance
+  features.
+
+V1 recommendation:
+
+- Use `HfApi` or direct Hub HTTP for search/describe metadata.
+- Use `hf download --local-dir <model-root>/huggingface/<namespace>/<model>` for direct in-app
+  downloads, because it gives reproducible user-selected storage instead of hiding everything under
+  a global cache.
+- Use `--dry-run` before download only for metadata/size preview, not as a user-facing confirmation
+  gate.
+- Pass tokens through process environment (`HF_TOKEN`) or command option plumbing owned by the server
+  settings/secrets layer; never write raw tokens into docs, logs, or model metadata.
+
+### Ollama
+
+Ollama should be handled as a local/service-backed source rather than as normal files under the hub
+root. Its own store uses manifests and blobs, and users may already have an active Ollama model
+store. The hub should display and control Ollama models through the Ollama API first, then offer
+storage-root guidance where Ollama itself supports it.
+
+Useful Ollama API/CLI behavior:
+
+- model names follow `model:tag`, with optional namespace and default `latest`
+- `/api/tags` lists local models
+- `/api/show` returns model details such as license, modelfile, template, parameters, and details
+- `/api/pull` pulls models and streams status objects
+- `/api/ps` / `ollama ps` show running models and processor placement
+- `/api/generate` and `/api/chat` accept `keep_alive`, and an empty prompt can preload/unload
+  models for later runtime management
+- `ollama ps` exposes CPU/GPU placement (`100% GPU`, `100% CPU`, or split CPU/GPU), which should feed
+  future safety rails
+
+V1 recommendation:
+
+- Inventory Ollama through `/api/tags` and enrich with `/api/show`.
+- Pull through `/api/pull` so progress can stream without shell parsing.
+- Keep existing Ollama storage intact unless the user explicitly configures `OLLAMA_MODELS` outside
+  the app.
+- Treat cloud models as remote-access entries with `cloud` tags and cached access probe state.
+
+## Download Orchestration
+
+Downloads should be tracked by a server-side hub runtime instead of fire-and-forget RPC calls.
+
+V1 process:
+
+1. Create a download record with source, model ID, target path, status, created time, and logs.
+2. If local inventory already proves the model is available, return `already_downloaded`.
+3. Start one source-adapter download task.
+4. Capture progress/log lines into the record.
+5. Mark `completed`, `failed`, or `cancelled`.
+6. Refresh local inventory for that source.
+
+The first implementation can expose progress through refreshable snapshots. A follow-up can add a
+streaming subscription once the data model is stable.
+
+Download records should be durable enough that a server restart can show "unknown/interrupted" for
+unfinished downloads instead of losing the action entirely. Long-term, use SQLite or another
+server-local database; a small JSON file under `models/metadata/downloads/` is acceptable for the
+earliest slice if it is wrapped behind the same service interface.
+
 ## Metadata
 
 Capture and display as much useful metadata as the source can provide. The normalized model record
@@ -175,14 +292,15 @@ Safety rails are mostly runtime-phase work, but the model hub data model should 
    - Show an empty hub page from the sidebar.
 
 2. **Hugging Face downloads**
-   - Add token-aware metadata fetch.
-   - Download selected models into the configured root.
+   - Add token-aware metadata fetch using `HfApi` or Hub HTTP.
+   - Download selected models into the configured root with `hf download --local-dir`.
    - Track progress, cancellation, failure, and local status.
 
 3. **Ollama inventory and cloud labels**
-   - Inventory local Ollama models.
+   - Inventory local Ollama models with `/api/tags` and enrich with `/api/show`.
    - Mark cloud models separately from local models.
    - Probe access sparingly and cache failures.
+   - Pull models through `/api/pull` and surface streamed progress.
 
 4. **Provider binding**
    - Let the Local provider select a hub-managed model/runtime target.
@@ -195,9 +313,17 @@ Safety rails are mostly runtime-phase work, but the model hub data model should 
 ## Open Questions
 
 - Which app-data location should be the default model root on Windows, WSL, macOS, and Linux?
-- Should Hugging Face downloads use `huggingface_hub`, `hf` CLI, direct HTTP, or a small T3-managed
-  worker abstraction first?
 - Should the hub keep its metadata in SQLite, server config, or a dedicated local JSON database?
 - How much destructive cleanup should be available in V1: remove one model, prune failed downloads,
   prune old revisions, or all of the above?
 - What provider/source placeholders should be visible on day one besides Hugging Face and Ollama?
+
+## References
+
+- Hugging Face HfApi client: <https://huggingface.co/docs/huggingface_hub/package_reference/hf_api>
+- Hugging Face download guide: <https://huggingface.co/docs/huggingface_hub/guides/download>
+- Hugging Face CLI guide: <https://huggingface.co/docs/huggingface_hub/guides/cli>
+- Hugging Face cache guide: <https://huggingface.co/docs/huggingface_hub/guides/manage-cache>
+- Hugging Face environment variables: <https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables>
+- Ollama API reference: <https://github.com/ollama/ollama/blob/main/docs/api.md>
+- Ollama GPU/processor placement FAQ: <https://github.com/ollama/ollama/blob/main/docs/faq.mdx>
