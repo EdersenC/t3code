@@ -13,9 +13,13 @@ import {
   CloudIcon,
   DownloadIcon,
   HardDriveIcon,
+  LayoutGridIcon,
+  ListIcon,
+  LoaderCircleIcon,
   RefreshCcwIcon,
   SearchIcon,
   ServerIcon,
+  SparklesIcon,
   XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -53,6 +57,25 @@ const PLACEHOLDER_SOURCES = [
   "OpenRouter cache",
 ] as const;
 
+const SEARCH_PRESETS: ReadonlyArray<{
+  readonly source: LocalModelHubSource;
+  readonly label: string;
+  readonly query: string;
+}> = [
+  { source: "huggingface", label: "Qwen 4B", query: "Qwen/Qwen3-4B" },
+  { source: "huggingface", label: "Qwen 8B", query: "Qwen/Qwen3-8B" },
+  { source: "huggingface", label: "Qwen Coder", query: "Qwen/Qwen2.5-Coder" },
+  { source: "huggingface", label: "GLM", query: "zai-org/GLM" },
+  { source: "huggingface", label: "SmolLM", query: "HuggingFaceTB/SmolLM" },
+  { source: "huggingface", label: "Tiny test", query: "sshleifer/tiny-gpt2" },
+  { source: "ollama", label: "Qwen 3", query: "qwen3" },
+  { source: "ollama", label: "GPT OSS", query: "gpt-oss" },
+  { source: "ollama", label: "Llama 3.2", query: "llama3.2" },
+  { source: "ollama", label: "Gemma 3", query: "gemma3" },
+];
+
+type ModelViewMode = "list" | "cards";
+
 function formatBytes(value: number | undefined): string {
   if (value === undefined) return "Unknown";
   const units = ["B", "KB", "MB", "GB", "TB"] as const;
@@ -63,6 +86,19 @@ function formatBytes(value: number | undefined): string {
     unitIndex += 1;
   }
   return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatDuration(startedAt: string, completedAt: string | undefined): string | null {
+  const started = Date.parse(startedAt);
+  const ended = completedAt ? Date.parse(completedAt) : Date.now();
+  if (!Number.isFinite(started) || !Number.isFinite(ended) || ended < started) return null;
+  const totalSeconds = Math.max(0, Math.round((ended - started) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
 }
 
 function modelBadges(model: LocalModelHubModel): ReadonlyArray<string> {
@@ -80,6 +116,44 @@ function sourceTone(source: LocalModelHubSource): string {
     : "border-emerald-500/20 bg-emerald-500/6 text-emerald-700 dark:text-emerald-300";
 }
 
+function isActiveDownloadStatus(status: string): boolean {
+  return status === "queued" || status === "running";
+}
+
+function ModelSummary({ model }: { readonly model: LocalModelHubModel }) {
+  const badges = modelBadges(model);
+  return (
+    <>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="truncate text-sm font-medium text-foreground">{model.modelId}</span>
+        <Badge size="sm" variant={model.installed ? "success" : "outline"}>
+          {model.installed ? "Installed" : "Remote"}
+        </Badge>
+        <Badge size="sm" variant="outline" className={cn("capitalize", sourceTone(model.source))}>
+          {model.source === "huggingface" ? "HF" : "Ollama"}
+        </Badge>
+      </div>
+      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span>{formatBytes(model.sizeBytes)}</span>
+        {model.metadata.downloads !== undefined ? (
+          <span>{model.metadata.downloads} downloads</span>
+        ) : null}
+        {model.metadata.likes !== undefined ? <span>{model.metadata.likes} likes</span> : null}
+        {model.localPath ? <span className="truncate">{model.localPath}</span> : null}
+      </div>
+      {badges.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {badges.map((badge) => (
+            <Badge key={badge} size="sm" variant="secondary">
+              {badge}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function ModelRow({
   model,
   action,
@@ -87,39 +161,70 @@ function ModelRow({
   readonly model: LocalModelHubModel;
   readonly action?: React.ReactNode;
 }) {
-  const badges = modelBadges(model);
   return (
     <div className="grid min-h-16 grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-border/70 px-4 py-3 last:border-b-0">
       <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-medium text-foreground">{model.modelId}</span>
-          <Badge size="sm" variant={model.installed ? "success" : "outline"}>
-            {model.installed ? "Installed" : "Remote"}
-          </Badge>
-          <Badge size="sm" variant="outline" className={cn("capitalize", sourceTone(model.source))}>
-            {model.source === "huggingface" ? "HF" : "Ollama"}
-          </Badge>
-        </div>
-        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span>{formatBytes(model.sizeBytes)}</span>
-          {model.metadata.downloads !== undefined ? (
-            <span>{model.metadata.downloads} downloads</span>
-          ) : null}
-          {model.metadata.likes !== undefined ? <span>{model.metadata.likes} likes</span> : null}
-          {model.localPath ? <span className="truncate">{model.localPath}</span> : null}
-        </div>
-        {badges.length > 0 ? (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {badges.map((badge) => (
-              <Badge key={badge} size="sm" variant="secondary">
-                {badge}
-              </Badge>
-            ))}
-          </div>
-        ) : null}
+        <ModelSummary model={model} />
       </div>
       {action ? <div className="flex items-center">{action}</div> : null}
     </div>
+  );
+}
+
+function ModelCard({
+  model,
+  action,
+}: {
+  readonly model: LocalModelHubModel;
+  readonly action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-h-36 flex-col justify-between gap-4 rounded-md border border-border bg-background p-4">
+      <div className="min-w-0">
+        <ModelSummary model={model} />
+      </div>
+      {action ? <div className="flex justify-end">{action}</div> : null}
+    </div>
+  );
+}
+
+function ModelCollection({
+  models,
+  viewMode,
+  empty,
+  renderAction,
+}: {
+  readonly models: ReadonlyArray<LocalModelHubModel>;
+  readonly viewMode: ModelViewMode;
+  readonly empty: string;
+  readonly renderAction?: (model: LocalModelHubModel) => React.ReactNode;
+}) {
+  if (models.length === 0) {
+    return <div className="px-4 py-8 text-center text-sm text-muted-foreground">{empty}</div>;
+  }
+  if (viewMode === "cards") {
+    return (
+      <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
+        {models.map((model) => (
+          <ModelCard
+            key={`${model.source}:${model.modelId}`}
+            model={model}
+            action={renderAction?.(model)}
+          />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <>
+      {models.map((model) => (
+        <ModelRow
+          key={`${model.source}:${model.modelId}`}
+          model={model}
+          action={renderAction?.(model)}
+        />
+      ))}
+    </>
   );
 }
 
@@ -128,6 +233,7 @@ function LocalModelsPage() {
   const settings = useAtomValue(primaryServerSettingsAtom);
   const [selectedSource, setSelectedSource] = useState<LocalModelHubSource>("huggingface");
   const [query, setQuery] = useState("Qwen/Qwen3");
+  const [modelViewMode, setModelViewMode] = useState<ModelViewMode>("list");
   const [rootDraft, setRootDraft] = useState(settings.localModelHub.modelRoot);
   const [searchResult, setSearchResult] = useState<LocalModelHubSearchResult | null>(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -196,33 +302,51 @@ function LocalModelsPage() {
     snapshotQuery.refresh();
   }, [primaryEnvironmentId, rootDraft, snapshotQuery, updateSettings]);
 
+  const handleSearchRequest = useCallback(
+    async (input: { readonly source: LocalModelHubSource; readonly query: string }) => {
+      if (primaryEnvironmentId === null || input.query.trim().length === 0) return;
+      const trimmedQuery = input.query.trim();
+      setSelectedSource(input.source);
+      setQuery(trimmedQuery);
+      setIsSearching(true);
+      const result = await runSearch({
+        environmentId: primaryEnvironmentId,
+        input: {
+          source: input.source,
+          query: trimmedQuery,
+          limit: 16,
+        },
+      });
+      setIsSearching(false);
+      if (result._tag === "Success") {
+        setSearchResult(result.value);
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Model search failed",
+            description: error instanceof Error ? error.message : "The search request failed.",
+          }),
+        );
+      }
+    },
+    [primaryEnvironmentId, runSearch],
+  );
+
   const handleSearch = useCallback(async () => {
-    if (primaryEnvironmentId === null || query.trim().length === 0) return;
-    setIsSearching(true);
-    const result = await runSearch({
-      environmentId: primaryEnvironmentId,
-      input: {
-        source: selectedSource,
-        query: query.trim(),
-        limit: 16,
-      },
-    });
-    setIsSearching(false);
-    if (result._tag === "Success") {
-      setSearchResult(result.value);
-      return;
-    }
-    if (!isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Model search failed",
-          description: error instanceof Error ? error.message : "The search request failed.",
-        }),
-      );
-    }
-  }, [primaryEnvironmentId, query, runSearch, selectedSource]);
+    if (query.trim().length === 0) return;
+    await handleSearchRequest({ source: selectedSource, query });
+  }, [handleSearchRequest, query, selectedSource]);
+
+  const handlePresetSearch = useCallback(
+    async (preset: (typeof SEARCH_PRESETS)[number]) => {
+      await handleSearchRequest({ source: preset.source, query: preset.query });
+    },
+    [handleSearchRequest],
+  );
 
   const handleDownload = useCallback(
     async (model: LocalModelHubModel) => {
@@ -380,47 +504,73 @@ function LocalModelsPage() {
 
               <div className="min-w-0 space-y-5">
                 <section className="overflow-hidden rounded-md border border-border">
-                  <div className="grid gap-2 border-b border-border bg-muted/20 p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-                    <div className="relative min-w-0">
-                      <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        className="pl-8"
-                        value={query}
-                        onChange={(event) => setQuery(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") void handleSearch();
-                        }}
-                      />
+                  <div className="grid gap-3 border-b border-border bg-muted/20 p-3">
+                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <div className="relative min-w-0">
+                        <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          className="pl-8"
+                          value={query}
+                          onChange={(event) => setQuery(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") void handleSearch();
+                          }}
+                        />
+                      </div>
+                      <Button size="sm" onClick={() => void handleSearch()} disabled={isSearching}>
+                        <SearchIcon className="size-4" />
+                        Search
+                      </Button>
                     </div>
-                    <Button size="sm" onClick={() => void handleSearch()} disabled={isSearching}>
-                      <SearchIcon className="size-4" />
-                      Search
-                    </Button>
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <SparklesIcon className="size-3.5 text-muted-foreground" />
+                      {SEARCH_PRESETS.map((preset) => (
+                        <Button
+                          key={`${preset.source}:${preset.query}`}
+                          size="xs"
+                          variant={preset.source === selectedSource ? "secondary" : "outline"}
+                          onClick={() => void handlePresetSearch(preset)}
+                        >
+                          {preset.label}
+                        </Button>
+                      ))}
+                      <div className="ms-auto flex rounded-md border border-border bg-background p-0.5">
+                        <Button
+                          size="icon-xs"
+                          variant={modelViewMode === "list" ? "secondary" : "ghost"}
+                          title="List view"
+                          onClick={() => setModelViewMode("list")}
+                        >
+                          <ListIcon className="size-3.5" />
+                        </Button>
+                        <Button
+                          size="icon-xs"
+                          variant={modelViewMode === "cards" ? "secondary" : "ghost"}
+                          title="Card view"
+                          onClick={() => setModelViewMode("cards")}
+                        >
+                          <LayoutGridIcon className="size-3.5" />
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                   <div className="divide-y divide-border/70">
-                    {activeSearchModels.length > 0 ? (
-                      activeSearchModels.map((model) => (
-                        <ModelRow
-                          key={`${model.source}:${model.modelId}`}
-                          model={model}
-                          action={
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              disabled={model.installed}
-                              onClick={() => void handleDownload(model)}
-                            >
-                              <DownloadIcon className="size-3.5" />
-                              Download
-                            </Button>
-                          }
-                        />
-                      ))
-                    ) : (
-                      <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                        {isSearching ? "Searching..." : "No search results"}
-                      </div>
-                    )}
+                    <ModelCollection
+                      models={activeSearchModels}
+                      viewMode={modelViewMode}
+                      empty={isSearching ? "Searching..." : "No search results"}
+                      renderAction={(model) => (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          disabled={model.installed}
+                          onClick={() => void handleDownload(model)}
+                        >
+                          <DownloadIcon className="size-3.5" />
+                          Download
+                        </Button>
+                      )}
+                    />
                   </div>
                 </section>
 
@@ -429,15 +579,11 @@ function LocalModelsPage() {
                     <HardDriveIcon className="size-4 text-muted-foreground" />
                     <span className="text-sm font-medium">Installed</span>
                   </div>
-                  {installedForSource.length > 0 ? (
-                    installedForSource.map((model) => (
-                      <ModelRow key={`${model.source}:${model.modelId}`} model={model} />
-                    ))
-                  ) : (
-                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                      No installed models
-                    </div>
-                  )}
+                  <ModelCollection
+                    models={installedForSource}
+                    viewMode={modelViewMode}
+                    empty="No installed models"
+                  />
                 </section>
 
                 <section className="overflow-hidden rounded-md border border-border">
@@ -446,50 +592,72 @@ function LocalModelsPage() {
                     <span className="text-sm font-medium">Downloads</span>
                   </div>
                   {downloads.length > 0 ? (
-                    downloads.map((download) => (
-                      <div
-                        key={download.downloadId}
-                        className="grid gap-3 border-b border-border/70 px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto]"
-                      >
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="truncate text-sm font-medium">{download.modelId}</span>
-                            <Badge
-                              size="sm"
-                              variant={
-                                download.status === "completed"
-                                  ? "success"
-                                  : download.status === "failed"
-                                    ? "error"
-                                    : download.status === "cancelled"
-                                      ? "warning"
-                                      : "info"
-                              }
+                    downloads.map((download) => {
+                      const active = isActiveDownloadStatus(download.status);
+                      const duration = formatDuration(download.startedAt, download.completedAt);
+                      return (
+                        <div
+                          key={download.downloadId}
+                          className={cn(
+                            "grid gap-3 border-b border-border/70 px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto]",
+                            active ? "bg-info/4" : "",
+                          )}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {active ? (
+                                <LoaderCircleIcon className="size-4 animate-spin text-info" />
+                              ) : null}
+                              <span className="truncate text-sm font-medium">
+                                {download.modelId}
+                              </span>
+                              <Badge
+                                size="sm"
+                                variant={
+                                  download.status === "completed"
+                                    ? "success"
+                                    : download.status === "failed"
+                                      ? "error"
+                                      : download.status === "cancelled"
+                                        ? "warning"
+                                        : "info"
+                                }
+                              >
+                                {download.status}
+                              </Badge>
+                              {duration ? (
+                                <span className="text-xs text-muted-foreground">
+                                  {active ? `${duration} elapsed` : `completed in ${duration}`}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 truncate text-xs text-muted-foreground">
+                              {download.progress ?? download.detail ?? download.targetPath}
+                            </div>
+                            {active ? (
+                              <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
+                                <div className="h-full w-1/3 animate-pulse rounded-full bg-info" />
+                              </div>
+                            ) : null}
+                            {download.logTail.length > 0 ? (
+                              <pre className="mt-2 max-h-24 overflow-auto rounded bg-muted/40 p-2 text-[11px] leading-4 text-muted-foreground">
+                                {download.logTail.slice(-6).join("\n")}
+                              </pre>
+                            ) : null}
+                          </div>
+                          {active ? (
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              onClick={() => void handleCancelDownload(download.downloadId)}
                             >
-                              {download.status}
-                            </Badge>
-                          </div>
-                          <div className="mt-1 truncate text-xs text-muted-foreground">
-                            {download.progress ?? download.detail ?? download.targetPath}
-                          </div>
-                          {download.logTail.length > 0 ? (
-                            <pre className="mt-2 max-h-24 overflow-auto rounded bg-muted/40 p-2 text-[11px] leading-4 text-muted-foreground">
-                              {download.logTail.slice(-6).join("\n")}
-                            </pre>
+                              <XIcon className="size-3.5" />
+                              Cancel
+                            </Button>
                           ) : null}
                         </div>
-                        {download.status === "running" || download.status === "queued" ? (
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            onClick={() => void handleCancelDownload(download.downloadId)}
-                          >
-                            <XIcon className="size-3.5" />
-                            Cancel
-                          </Button>
-                        ) : null}
-                      </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                       No downloads

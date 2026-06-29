@@ -142,28 +142,26 @@ into the UI data model except as source-specific metadata fields.
 
 ### Hugging Face
 
-Hugging Face should be the first remote-file source because its official tooling already supports the
-operations the hub needs:
+Hugging Face should be the first remote-file source because its Hub APIs expose the metadata and
+file-resolution behavior the hub needs:
 
 - `HfApi` is the flexible API client for Hub search and model metadata, including token-per-request
   usage without persisting credentials on disk.
-- `hf download` downloads either one file, selected patterns, or an entire repo.
-- `hf download --local-dir <dir>` creates local metadata under `.cache/huggingface/` and skips
-  already-current files on later runs.
-- `hf download --dry-run` reports which files would be downloaded and an estimated byte count.
-- `hf download --cache-dir <dir>` and `HF_HOME` let T3 keep cache/model artifacts under the selected
-  hub root.
-- `hf cache ls --format json` and `scan_cache_dir()` can support later inventory/maintenance
-  features.
+- The model metadata API returns sibling file names for a repo.
+- `/{model}/resolve/{revision}/{file}` downloads files without requiring a local Python/HF CLI
+  install.
+- `hf download`, `hf cache ls --format json`, and `scan_cache_dir()` remain useful references for
+  future maintenance features, but the app should not require the `hf` executable for normal
+  downloads.
 
 V1 recommendation:
 
 - Use `HfApi` or direct Hub HTTP for search/describe metadata.
-- Use `hf download --local-dir <model-root>/huggingface/<namespace>/<model>` for direct in-app
-  downloads, because it gives reproducible user-selected storage instead of hiding everything under
-  a global cache.
-- Use `--dry-run` before download only for metadata/size preview, not as a user-facing confirmation
-  gate.
+- Download files with direct Hub HTTP streaming into
+  `<model-root>/huggingface/<namespace>/<model>`, because it works inside the app process and avoids
+  `spawn hf` platform/path failures.
+- Add dry-run/size preview later from metadata or a dedicated source adapter method, not as a
+  user-facing confirmation gate.
 - Pass tokens through process environment (`HF_TOKEN`) or command option plumbing owned by the server
   settings/secrets layer; never write raw tokens into docs, logs, or model metadata.
 
@@ -293,7 +291,7 @@ Safety rails are mostly runtime-phase work, but the model hub data model should 
 
 2. **Hugging Face downloads**
    - Add token-aware metadata fetch using `HfApi` or Hub HTTP.
-   - Download selected models into the configured root with `hf download --local-dir`.
+   - Download selected models into the configured root with direct Hub HTTP streaming.
    - Track progress, cancellation, failure, and local status.
 
 3. **Ollama inventory and cloud labels**

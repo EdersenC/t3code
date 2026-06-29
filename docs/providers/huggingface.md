@@ -7,33 +7,35 @@ were downloaded from Hugging Face.
 ## Recommended V1 Integration
 
 - Search and describe models with Hugging Face Hub metadata APIs.
-- Download models with `hf download --local-dir <model-root>/huggingface/<namespace>/<model>`.
-- Use `--revision` when a specific branch, tag, PR ref, or commit is selected.
-- Use `--include` and `--exclude` later for quantization/format-specific downloads.
-- Use `--dry-run` for size/changed-file preview only; the product behavior remains direct in-app
-  download after the user clicks Download.
+- Download model files by streaming Hub `resolve` URLs into
+  `<model-root>/huggingface/<namespace>/<model>`.
+- Use the selected revision when a specific branch, tag, PR ref, or commit is selected.
+- Add include/exclude controls later for quantization/format-specific downloads.
+- Use metadata-based preview later for size/changed-file estimates only; the product behavior remains
+  direct in-app download after the user clicks Download.
+- Do not require the `hf` executable for normal downloads; it can be missing, non-executable, or
+  different in app-bundled environments.
 - Keep authentication in server-managed secrets/environment. Do not persist raw tokens in model
   metadata, logs, docs, or client-side state.
 
 ## Storage
 
 Hugging Face's default cache is useful, but the hub needs a user-selected root that is easy to move,
-back up, mount into containers, and reproduce on another machine. Prefer `--local-dir` under the hub
-root for user-visible model stores:
+back up, mount into containers, and reproduce on another machine. Keep files under the hub root for
+user-visible model stores:
 
 ```text
 models/
   huggingface/
     Qwen/
       Qwen3-4B-AWQ/
-        .cache/huggingface/
         config.json
         tokenizer.json
         model-*.safetensors
 ```
 
-The `.cache/huggingface/` metadata under the local directory lets repeat downloads skip files that
-are already current.
+Repeat downloads should skip files that already match the metadata-reported size when that size is
+available.
 
 ## Metadata
 
@@ -55,7 +57,7 @@ Hugging Face failures should include:
 
 - repo ID and revision
 - whether the action was search, describe, dry-run, or download
-- command/API detail from the underlying tool
+- HTTP/API detail from the underlying source
 - access/gating hints when the error indicates auth or license acceptance
 - target local directory for download failures
 
@@ -63,5 +65,4 @@ Hugging Face failures should include:
 
 - HfApi client: <https://huggingface.co/docs/huggingface_hub/package_reference/hf_api>
 - Download guide: <https://huggingface.co/docs/huggingface_hub/guides/download>
-- CLI guide: <https://huggingface.co/docs/huggingface_hub/guides/cli>
 - Cache guide: <https://huggingface.co/docs/huggingface_hub/guides/manage-cache>

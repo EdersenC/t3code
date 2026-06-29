@@ -11,10 +11,12 @@ import {
   type LocalModelHubSource,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeStream from "node:stream";
+import * as NodeStreamPromises from "node:stream/promises";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -24,6 +26,8 @@ const OLLAMA_LABEL = "Ollama";
 const DEFAULT_SEARCH_LIMIT = 12;
 const MAX_LOG_LINES = 60;
 const MAX_DOWNLOAD_RECORDS = 80;
+
+const HUGGING_FACE_DEFAULT_REVISION = "main";
 
 interface ActiveDownload {
   readonly abort: () => void;
@@ -137,6 +141,14 @@ async function directoryHasModelPayload(path: string): Promise<boolean> {
   return false;
 }
 
+async function removeDirectoryIfEmpty(path: string): Promise<void> {
+  try {
+    await NodeFSP.rmdir(path);
+  } catch {
+    // Best-effort cleanup. Parent folders can stay if another download is using them.
+  }
+}
+
 async function ensureHubDirectories(paths: HubPaths): Promise<void> {
   await Promise.all([
     NodeFSP.mkdir(paths.huggingFaceRoot, { recursive: true }),
@@ -157,6 +169,7 @@ async function listHuggingFaceModels(paths: HubPaths): Promise<ReadonlyArray<Loc
     for (const modelEntry of modelEntries) {
       if (!modelEntry.isDirectory() || modelEntry.name.startsWith(".")) continue;
       const localPath = NodePath.join(orgPath, modelEntry.name);
+      if (!(await directoryHasModelPayload(localPath))) continue;
       const modelId = `${orgEntry.name}/${modelEntry.name}`;
       models.push({
         source: "huggingface",
@@ -268,6 +281,137 @@ interface HuggingFaceApiModel {
   readonly likes?: unknown;
   readonly lastModified?: unknown;
   readonly pipeline_tag?: unknown;
+}
+
+interface HuggingFaceModelFile {
+  readonly rfilename?: unknown;
+  readonly size?: unknown;
+}
+
+interface HuggingFaceModelInfo {
+  readonly siblings?: ReadonlyArray<HuggingFaceModelFile>;
+}
+
+interface HuggingFaceSnapshotDownloadInput {
+  readonly modelId: string;
+  readonly targetPath: string;
+  readonly revision?: string | undefined;
+  readonly token?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly onLog?: (line: string) => void;
+}
+
+function huggingFaceHeaders(token: string | undefined): Record<string, string> {
+  return token && token.length > 0 ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function huggingFaceModelApiUrl(modelId: string): string {
+  return `https://huggingface.co/api/models/${modelId
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}`;
+}
+
+function huggingFaceResolveUrl(input: {
+  readonly modelId: string;
+  readonly revision: string;
+  readonly filename: string;
+}): string {
+  return `https://huggingface.co/${input.modelId
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}/resolve/${encodeURIComponent(input.revision)}/${input.filename
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}`;
+}
+
+async function writeResponseBodyToFile(response: Response, targetPath: string): Promise<void> {
+  if (!response.body) {
+    throw new Error("Hugging Face returned an empty response body.");
+  }
+  await NodeFSP.mkdir(NodePath.dirname(targetPath), { recursive: true });
+  await NodeStreamPromises.pipeline(
+    NodeStream.Readable.fromWeb(response.body),
+    NodeFS.createWriteStream(targetPath),
+  );
+}
+
+async function fileSize(path: string): Promise<number | null> {
+  try {
+    const stat = await NodeFSP.stat(path);
+    return stat.isFile() ? stat.size : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeHuggingFaceFilename(filename: string): string {
+  return filename
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+    .map((segment) => {
+      const sanitized = segment.replace(/[^a-zA-Z0-9._ -]/g, "-").replace(/^\.+$/, "-");
+      return sanitized.length > 0 ? sanitized : "-";
+    })
+    .join("/");
+}
+
+export async function downloadHuggingFaceModelSnapshot(
+  input: HuggingFaceSnapshotDownloadInput,
+): Promise<void> {
+  const revision = input.revision?.trim() || HUGGING_FACE_DEFAULT_REVISION;
+  const infoResponse = await fetch(huggingFaceModelApiUrl(input.modelId), {
+    headers: huggingFaceHeaders(input.token),
+    signal: input.signal ?? null,
+  });
+  if (!infoResponse.ok) {
+    throw new Error(
+      `Hugging Face model metadata returned ${infoResponse.status} ${infoResponse.statusText}.`,
+    );
+  }
+  const info = (await infoResponse.json()) as HuggingFaceModelInfo;
+  const files =
+    info.siblings
+      ?.map((file) => ({
+        filename: typeof file.rfilename === "string" ? file.rfilename : "",
+        size: typeof file.size === "number" ? file.size : undefined,
+      }))
+      .filter((file) => file.filename.length > 0 && !file.filename.startsWith("."))
+      .sort((left, right) => left.filename.localeCompare(right.filename)) ?? [];
+  if (files.length === 0) {
+    throw new Error("Hugging Face model metadata did not include downloadable files.");
+  }
+  input.onLog?.(`Resolved ${files.length} file(s) for ${input.modelId}@${revision}.`);
+  for (const file of files) {
+    const relativePath = normalizeHuggingFaceFilename(file.filename);
+    const targetFilePath = NodePath.resolve(input.targetPath, relativePath);
+    const targetRelativePath = NodePath.relative(input.targetPath, targetFilePath);
+    if (targetRelativePath.startsWith("..") || NodePath.isAbsolute(targetRelativePath)) {
+      throw new Error(`Hugging Face file '${file.filename}' resolves outside the target folder.`);
+    }
+    const existingSize = await fileSize(targetFilePath);
+    if (file.size !== undefined && existingSize === file.size) {
+      input.onLog?.(`Skipped ${file.filename}; file already exists.`);
+      continue;
+    }
+    input.onLog?.(`Downloading ${file.filename}${file.size ? ` (${file.size} bytes)` : ""}.`);
+    const response = await fetch(
+      huggingFaceResolveUrl({
+        modelId: input.modelId,
+        revision,
+        filename: file.filename,
+      }),
+      { headers: huggingFaceHeaders(input.token), signal: input.signal ?? null },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Hugging Face file '${file.filename}' returned ${response.status} ${response.statusText}.`,
+      );
+    }
+    await writeResponseBodyToFile(response, targetFilePath);
+  }
 }
 
 function mapHuggingFaceApiModel(
@@ -437,7 +581,6 @@ export function makeLocalModelHub(input: {
     const targetPath = makeHuggingFaceTargetPath(paths, input.modelId);
     return Effect.tryPromise({
       try: async () => {
-        await NodeFSP.mkdir(targetPath, { recursive: true });
         if (await directoryHasModelPayload(targetPath)) {
           return {
             download: makeDownloadRecord({
@@ -449,62 +592,65 @@ export function makeLocalModelHub(input: {
             }),
           };
         }
+        await NodeFSP.mkdir(targetPath, { recursive: true });
 
         const record = makeDownloadRecord({
           source: "huggingface",
           modelId: input.modelId,
           targetPath,
         });
-        const args = ["download", input.modelId, "--local-dir", targetPath];
-        if (input.revision && input.revision.length > 0) {
-          args.push("--revision", input.revision);
-        }
-        const child = NodeChildProcess.spawn("hf", args, {
-          env: {
-            ...process.env,
-            HF_HOME: NodePath.join(paths.huggingFaceRoot, ".cache"),
-          },
-          stdio: ["ignore", "pipe", "pipe"],
-        });
+        const abortController = new AbortController();
         const active: ActiveDownload = {
           record,
-          abort: () => child.kill("SIGTERM"),
+          abort: () => abortController.abort(),
         };
         downloads.set(record.downloadId, active);
         downloadsByKey.set(downloadKey(input.source, input.modelId), record.downloadId);
         pruneDownloadRecords();
-        const updateLog = (chunk: Buffer) => {
-          for (const line of chunk.toString("utf8").split(/\r?\n/)) {
-            active.record = appendLog(active.record, line);
+        void (async () => {
+          try {
+            await downloadHuggingFaceModelSnapshot({
+              modelId: input.modelId,
+              targetPath,
+              revision: input.revision,
+              token: process.env.HF_TOKEN,
+              signal: abortController.signal,
+              onLog: (line) => {
+                active.record = appendLog(active.record, line);
+              },
+            });
+            if (abortController.signal.aborted) {
+              active.record = {
+                ...active.record,
+                status: "cancelled",
+                completedAt: nowIso(),
+                detail: "Download cancelled.",
+              };
+              return;
+            }
+            active.record = {
+              ...active.record,
+              status: "completed",
+              completedAt: nowIso(),
+              detail: "Download completed.",
+            };
+          } catch (cause) {
+            active.record = {
+              ...appendLog(active.record, normalizeDetail(cause)),
+              status: abortController.signal.aborted ? "cancelled" : "failed",
+              completedAt: nowIso(),
+              detail: abortController.signal.aborted
+                ? "Download cancelled."
+                : normalizeDetail(cause),
+            };
+            if (!(await directoryHasModelPayload(targetPath))) {
+              await removeDirectoryIfEmpty(targetPath);
+            }
+          } finally {
+            downloadsByKey.delete(downloadKey(input.source, input.modelId));
+            pruneDownloadRecords();
           }
-        };
-        child.stdout?.on("data", updateLog);
-        child.stderr?.on("data", updateLog);
-        child.on("error", (cause) => {
-          active.record = {
-            ...appendLog(active.record, normalizeDetail(cause)),
-            status: "failed",
-            completedAt: nowIso(),
-            detail: normalizeDetail(cause),
-          };
-          downloadsByKey.delete(downloadKey(input.source, input.modelId));
-          pruneDownloadRecords();
-        });
-        child.on("exit", (code, signal) => {
-          const wasCancelled = active.record.status === "cancelled";
-          active.record = {
-            ...active.record,
-            status: wasCancelled ? "cancelled" : code === 0 ? "completed" : "failed",
-            completedAt: nowIso(),
-            detail: wasCancelled
-              ? "Download cancelled."
-              : code === 0
-                ? "Download completed."
-                : `hf download exited with code ${code ?? "null"} and signal ${signal ?? "none"}.`,
-          };
-          downloadsByKey.delete(downloadKey(input.source, input.modelId));
-          pruneDownloadRecords();
-        });
+        })();
         return { download: record };
       },
       catch: (cause) =>
