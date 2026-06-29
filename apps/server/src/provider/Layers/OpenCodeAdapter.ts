@@ -314,7 +314,7 @@ function markTurnOutput(
 
 function hasTurnOutput(context: OpenCodeSessionContext, turnId: TurnId): boolean {
   const output = context.turnOutputById.get(turnId);
-  return output !== undefined && output.assistantTextChars > 0;
+  return output !== undefined && (output.assistantTextChars > 0 || output.reasoningTextChars > 0);
 }
 
 function isFatalRetryStatusMessage(message: string): boolean {
