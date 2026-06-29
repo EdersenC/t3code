@@ -379,6 +379,28 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("includes nested provider prompt request failures in the user-facing detail", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        const sdkCause = {
+          error: {
+            message: "model openai/gpt-oss-120b does not exist",
+          },
+        };
+        runtimeMock.state.promptRequestError = sdkCause;
+
+        const error = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(TextGenerationError);
+        expect(error.message).toContain("OpenCode session.prompt request failed.");
+        expect(error.message).toContain("model openai/gpt-oss-120b does not exist");
+        expect((error.cause as { cause: unknown }).cause).toBe(sdkCause);
+      }),
+    ),
+  );
+
   it.effect("returns a typed empty-output error for malformed and blank response parts", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
@@ -405,6 +427,44 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
         });
         expect(error.cause).not.toHaveProperty("cause");
       }),
+    ),
+  );
+
+  it.effect("surfaces nested upstream OpenCode response error messages", () =>
+    withOpenCodeTextGeneration(
+      DEFAULT_OPENCODE_SETTINGS,
+      (textGeneration) =>
+        Effect.gen(function* () {
+          runtimeMock.state.promptResult = {
+            data: {
+              info: {
+                error: {
+                  name: "ContextOverflowError",
+                  error: {
+                    message:
+                      "Request too large for model `llama-3.1-8b-instant` on tokens per minute (TPM): Limit 6000, Requested 42347",
+                  },
+                },
+              },
+            },
+          };
+
+          const error = yield* textGeneration
+            .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+            .pipe(Effect.flip);
+
+          expect(error.message).toContain("formatted gpt-5");
+          expect(error.message).toContain("tokens per minute");
+          expect(error.cause).toMatchObject({
+            _tag: "OpenCodeTextGenerationPromptResponseError",
+            providerErrorName: "ContextOverflowError",
+            providerMessage:
+              "Request too large for model `llama-3.1-8b-instant` on tokens per minute (TPM): Limit 6000, Requested 42347",
+          });
+        }),
+      {
+        describeErrorDetail: ({ detail, modelId }) => `formatted ${modelId}: ${detail}`,
+      },
     ),
   );
 

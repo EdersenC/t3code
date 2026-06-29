@@ -344,7 +344,17 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
   });
 
+  it("parses standalone /clear command", () => {
+    expect(parseStandaloneComposerSlashCommand("/clear")).toBe("clear");
+  });
+
+  it("parses standalone /compact command", () => {
+    expect(parseStandaloneComposerSlashCommand("/compact")).toBe("compact");
+    expect(parseStandaloneComposerSlashCommand("/compact ")).toBe("compact");
+  });
+
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/compact explain first")).toBeNull();
   });
 });

@@ -33,6 +33,7 @@ import {
   appendOpenCodeAssistantTextDelta,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
+  sessionErrorMessage,
   splitInlineThinkingText,
   type OpenCodeAdapterLiveOptions,
 } from "./OpenCodeAdapter.ts";
@@ -52,6 +53,8 @@ type MessageEntry = {
   parts: Array<unknown>;
 };
 
+type PendingEventResolver = (result: IteratorResult<unknown>) => void;
+
 const runtimeMock = {
   state: {
     startCalls: [] as string[],
@@ -65,8 +68,27 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    holdEventStreamOpen: false,
+    dynamicEvents: [] as unknown[],
+    eventResolvers: [] as Array<PendingEventResolver>,
+    eventStreamClosed: false,
+  },
+  pushSubscribedEvent(event: unknown) {
+    const resolver = this.state.eventResolvers.shift();
+    if (resolver) {
+      resolver({ value: event, done: false });
+      return;
+    }
+    this.state.dynamicEvents.push(event);
+  },
+  closeSubscribedEvents() {
+    this.state.eventStreamClosed = true;
+    for (const resolver of this.state.eventResolvers.splice(0)) {
+      resolver({ value: undefined, done: true });
+    }
   },
   reset() {
+    this.closeSubscribedEvents();
     this.state.startCalls.length = 0;
     this.state.sessionCreateUrls.length = 0;
     this.state.authHeaders.length = 0;
@@ -78,6 +100,10 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.holdEventStreamOpen = false;
+    this.state.dynamicEvents = [];
+    this.state.eventResolvers = [];
+    this.state.eventStreamClosed = false;
   },
 };
 
@@ -165,6 +191,26 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           stream: (async function* () {
             for (const event of runtimeMock.state.subscribedEvents) {
               yield event;
+            }
+            if (!runtimeMock.state.holdEventStreamOpen) {
+              return;
+            }
+            while (true) {
+              const queuedEvent = runtimeMock.state.dynamicEvents.shift();
+              if (queuedEvent !== undefined) {
+                yield queuedEvent;
+                continue;
+              }
+              if (runtimeMock.state.eventStreamClosed) {
+                return;
+              }
+              const result = await new Promise<IteratorResult<unknown>>((resolve) => {
+                runtimeMock.state.eventResolvers.push(resolve);
+              });
+              if (result.done) {
+                return;
+              }
+              yield result.value;
             }
           })(),
         }),
@@ -396,6 +442,610 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(sessions[0]?.lastError, "prompt failed");
     }),
   );
+
+  it.effect("applies provider-specific error detail when sendTurn request fails", () => {
+    const adapterLayer = makeOpenCodeAdapterTestLayer({
+      provider: ProviderDriverKind.make("groq"),
+      instanceId: ProviderInstanceId.make("groq"),
+      describeErrorDetail: ({ detail, modelSelection }) =>
+        `Groq model '${modelSelection?.model ?? "unknown"}' failed while answering. Details: ${detail}`,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-send-turn-groq-failure");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("groq"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      runtimeMock.state.promptAsyncError = new Error("429 rate limit exceeded");
+      const error = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "Fix it",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("groq"),
+            model: "groq/openai/gpt-oss-120b",
+          },
+        })
+        .pipe(Effect.flip);
+      const sessions = yield* adapter.listSessions();
+
+      NodeAssert.equal(error._tag, "ProviderAdapterRequestError");
+      if (error._tag !== "ProviderAdapterRequestError") {
+        throw new Error("Unexpected error type");
+      }
+      NodeAssert.equal(
+        error.detail,
+        "Groq model 'groq/openai/gpt-oss-120b' failed while answering. Details: 429 rate limit exceeded",
+      );
+      NodeAssert.equal(sessions[0]?.lastError, error.detail);
+    }).pipe(Effect.provide(adapterLayer));
+  });
+
+  it.effect("fails a turn when OpenCode idles without any model output", () => {
+    const adapterLayer = makeOpenCodeAdapterTestLayer({
+      provider: ProviderDriverKind.make("groq"),
+      instanceId: ProviderInstanceId.make("groq"),
+      describeErrorDetail: ({ detail, emptyOutput, modelSelection }) =>
+        emptyOutput ? `Groq empty ${modelSelection?.model ?? "unknown"}: ${detail}` : detail,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-empty-output");
+      runtimeMock.state.holdEventStreamOpen = true;
+      const streamFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("groq"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Fix it",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("groq"),
+          model: "groq/openai/gpt-oss-120b",
+        },
+      });
+      yield* Effect.yieldNow;
+      runtimeMock.pushSubscribedEvent({
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+      runtimeMock.closeSubscribedEvents();
+
+      const events = Array.from(yield* Fiber.join(streamFiber).pipe(Effect.timeout("1 second")));
+      const turnCompleted = events.find((event) => event.type === "turn.completed");
+      const runtimeError = events.find((event) => event.type === "runtime.error");
+      const expected = "Groq empty groq/openai/gpt-oss-120b: OpenCode returned empty output.";
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started", "turn.started", "turn.completed", "runtime.error"],
+      );
+      NodeAssert.equal(
+        turnCompleted?.type === "turn.completed" ? turnCompleted.payload.state : undefined,
+        "failed",
+      );
+      NodeAssert.equal(
+        turnCompleted?.type === "turn.completed" ? turnCompleted.payload.errorMessage : undefined,
+        expected,
+      );
+      NodeAssert.equal(
+        runtimeError?.type === "runtime.error" ? runtimeError.payload.message : undefined,
+        expected,
+      );
+      const sessions = yield* adapter.listSessions();
+      NodeAssert.equal(sessions[0]?.status, "error");
+      NodeAssert.equal(sessions[0]?.lastError, expected);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => runtimeMock.closeSubscribedEvents())),
+      Effect.provide(adapterLayer),
+    );
+  });
+
+  it.effect(
+    "fails a turn when OpenCode only reports tool bookkeeping without assistant text",
+    () => {
+      const adapterLayer = makeOpenCodeAdapterTestLayer({
+        provider: ProviderDriverKind.make("groq"),
+        instanceId: ProviderInstanceId.make("groq"),
+        describeErrorDetail: ({ detail, emptyOutput, modelSelection }) =>
+          emptyOutput ? `Groq empty ${modelSelection?.model ?? "unknown"}: ${detail}` : detail,
+      });
+
+      return Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-tool-only-empty-output");
+        runtimeMock.state.holdEventStreamOpen = true;
+        const streamFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.threadId === threadId),
+          Stream.take(6),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("groq"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Fix it",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("groq"),
+            model: "groq/openai/gpt-oss-120b",
+          },
+        });
+        yield* Effect.yieldNow;
+        runtimeMock.pushSubscribedEvent({
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "part-tool-only",
+              messageID: "msg-tool-only",
+              type: "tool",
+              tool: "bash",
+              callID: "call-tool-only",
+              state: {
+                status: "completed",
+                output: "tool completed without an assistant answer",
+                time: { start: 1, end: 2 },
+              },
+            },
+            time: 2,
+          },
+        });
+        runtimeMock.pushSubscribedEvent({
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "idle" },
+          },
+        });
+        runtimeMock.closeSubscribedEvents();
+
+        const events = Array.from(yield* Fiber.join(streamFiber).pipe(Effect.timeout("1 second")));
+        const turnCompleted = events.find((event) => event.type === "turn.completed");
+        const runtimeError = events.find((event) => event.type === "runtime.error");
+        const expected = "Groq empty groq/openai/gpt-oss-120b: OpenCode returned empty output.";
+
+        NodeAssert.deepEqual(
+          events.map((event) => event.type),
+          [
+            "session.started",
+            "thread.started",
+            "turn.started",
+            "item.completed",
+            "turn.completed",
+            "runtime.error",
+          ],
+        );
+        NodeAssert.equal(
+          turnCompleted?.type === "turn.completed" ? turnCompleted.payload.state : undefined,
+          "failed",
+        );
+        NodeAssert.equal(
+          runtimeError?.type === "runtime.error" ? runtimeError.payload.message : undefined,
+          expected,
+        );
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => runtimeMock.closeSubscribedEvents())),
+        Effect.provide(adapterLayer),
+      );
+    },
+  );
+
+  it.effect("streams OpenCode session.next text events as assistant output", () => {
+    const adapterLayer = makeOpenCodeAdapterTestLayer();
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-next-text-output");
+      runtimeMock.state.holdEventStreamOpen = true;
+      const streamFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(6),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "openai/gpt-4.1"),
+      });
+      yield* Effect.yieldNow;
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-text-started",
+        type: "session.next.text.started",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          timestamp: 1,
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-text-delta",
+        type: "session.next.text.delta",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          timestamp: 2,
+          delta: "hello from next stream",
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-text-ended",
+        type: "session.next.text.ended",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          timestamp: 3,
+          text: "hello from next stream",
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-text-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+      runtimeMock.closeSubscribedEvents();
+
+      const events = Array.from(yield* Fiber.join(streamFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "session.started",
+          "thread.started",
+          "turn.started",
+          "content.delta",
+          "item.completed",
+          "turn.completed",
+        ],
+      );
+      const delta = events.find((event) => event.type === "content.delta");
+      NodeAssert.equal(
+        delta?.type === "content.delta" ? delta.payload.delta : undefined,
+        "hello from next stream",
+      );
+      const completed = events.find((event) => event.type === "item.completed");
+      NodeAssert.equal(
+        completed?.type === "item.completed" ? completed.payload.detail : undefined,
+        "hello from next stream",
+      );
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => runtimeMock.closeSubscribedEvents())),
+      Effect.provide(adapterLayer),
+    );
+  });
+
+  it.effect("uses an OpenCode step failure as the final empty-output error detail", () => {
+    const adapterLayer = makeOpenCodeAdapterTestLayer({
+      provider: ProviderDriverKind.make("groq"),
+      instanceId: ProviderInstanceId.make("groq"),
+      describeErrorDetail: ({ detail, modelSelection }) =>
+        `Groq ${modelSelection?.model ?? "unknown"} failed: ${detail}`,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-next-step-failed");
+      runtimeMock.state.holdEventStreamOpen = true;
+      const streamFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(8),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("groq"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("groq"),
+          model: "groq/llama-3.3-70b-versatile",
+        },
+      });
+      yield* Effect.yieldNow;
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-step-failed",
+        type: "session.next.step.failed",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          timestamp: 1,
+          error: {
+            type: "unknown",
+            message:
+              "Request too large for model `llama-3.3-70b-versatile` on tokens per minute (TPM): Limit 12000, Requested 14231",
+          },
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-text-delta-after-failure",
+        type: "session.next.text.delta",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          timestamp: 2,
+          delta: "synthetic compaction text",
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-text-ended-after-failure",
+        type: "session.next.text.ended",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          timestamp: 3,
+          text: "synthetic compaction text",
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-step-failed-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+      runtimeMock.closeSubscribedEvents();
+
+      const events = Array.from(yield* Fiber.join(streamFiber).pipe(Effect.timeout("1 second")));
+      const warning = events.find((event) => event.type === "runtime.warning");
+      const runtimeError = events.find((event) => event.type === "runtime.error");
+      const expected =
+        "Groq groq/llama-3.3-70b-versatile failed: Request too large for model `llama-3.3-70b-versatile` on tokens per minute (TPM): Limit 12000, Requested 14231";
+
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "session.started",
+          "thread.started",
+          "turn.started",
+          "runtime.warning",
+          "content.delta",
+          "item.completed",
+          "turn.completed",
+          "runtime.error",
+        ],
+      );
+      NodeAssert.equal(
+        warning?.type === "runtime.warning" ? warning.payload.message : undefined,
+        expected,
+      );
+      NodeAssert.equal(
+        runtimeError?.type === "runtime.error" ? runtimeError.payload.message : undefined,
+        expected,
+      );
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => runtimeMock.closeSubscribedEvents())),
+      Effect.provide(adapterLayer),
+    );
+  });
+
+  it.effect("can fail and abort immediately on OpenCode step failure", () => {
+    const adapterLayer = makeOpenCodeAdapterTestLayer({
+      provider: ProviderDriverKind.make("groq"),
+      instanceId: ProviderInstanceId.make("groq"),
+      describeErrorDetail: ({ detail, modelSelection }) =>
+        `Groq ${modelSelection?.model ?? "unknown"} failed: ${detail}`,
+      failTurnOnStepFailure: true,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-next-step-failed-fast");
+      runtimeMock.state.holdEventStreamOpen = true;
+      const streamFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(6),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("groq"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("groq"),
+          model: "groq/qwen/qwen3-32b",
+        },
+      });
+      yield* Effect.yieldNow;
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-step-failed-fast",
+        type: "session.next.step.failed",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          timestamp: 1,
+          error: {
+            type: "rate_limit_error",
+            message:
+              "Request too large for model `qwen/qwen3-32b` on tokens per minute (TPM): Limit 6000, Requested 8397",
+          },
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-step-failed-fast-noise",
+        type: "session.next.text.delta",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          timestamp: 2,
+          delta: "retry text should not attach to the failed turn",
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-step-failed-fast-retry-noise",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: {
+            type: "retry",
+            message: "retrying after request-size failure",
+          },
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-step-failed-fast-ended-noise",
+        type: "session.next.text.ended",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          timestamp: 3,
+          text: "retry text should not attach to the failed turn",
+        },
+      });
+      runtimeMock.closeSubscribedEvents();
+
+      const events = Array.from(yield* Fiber.join(streamFiber).pipe(Effect.timeout("1 second")));
+      const expected =
+        "Groq groq/qwen/qwen3-32b failed: Request too large for model `qwen/qwen3-32b` on tokens per minute (TPM): Limit 6000, Requested 8397";
+
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "session.started",
+          "thread.started",
+          "turn.started",
+          "runtime.warning",
+          "turn.completed",
+          "runtime.error",
+        ],
+      );
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, ["http://127.0.0.1:9999/session"]);
+      NodeAssert.equal(
+        events[4]?.type === "turn.completed" ? events[4].payload.errorMessage : undefined,
+        expected,
+      );
+      NodeAssert.equal(
+        events[5]?.type === "runtime.error" ? events[5].payload.message : undefined,
+        expected,
+      );
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => runtimeMock.closeSubscribedEvents())),
+      Effect.provide(adapterLayer),
+    );
+  });
+
+  it.effect("fails and aborts fatal OpenCode retry statuses instead of looping", () => {
+    const adapterLayer = makeOpenCodeAdapterTestLayer({
+      provider: ProviderDriverKind.make("groq"),
+      instanceId: ProviderInstanceId.make("groq"),
+      describeErrorDetail: ({ detail, modelSelection }) =>
+        `Groq ${modelSelection?.model ?? "unknown"} failed: ${detail}`,
+      failTurnOnRetryStatus: true,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-next-retry-failed-fast");
+      runtimeMock.state.holdEventStreamOpen = true;
+      const streamFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(6),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("groq"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("groq"),
+          model: "groq/openai/gpt-oss-120b",
+        },
+      });
+      yield* Effect.yieldNow;
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-retry-fatal",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: {
+            type: "retry",
+            message:
+              "Request too large for model `openai/gpt-oss-120b` on tokens per minute (TPM): Limit 8000, Requested 10422",
+          },
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        id: "evt-next-retry-fatal-text-noise",
+        type: "session.next.text.delta",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          timestamp: 2,
+          delta: "Goal summary retry text should not render",
+        },
+      });
+      runtimeMock.closeSubscribedEvents();
+
+      const events = Array.from(yield* Fiber.join(streamFiber).pipe(Effect.timeout("1 second")));
+      const expected =
+        "Groq groq/openai/gpt-oss-120b failed: Request too large for model `openai/gpt-oss-120b` on tokens per minute (TPM): Limit 8000, Requested 10422";
+
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "session.started",
+          "thread.started",
+          "turn.started",
+          "runtime.warning",
+          "turn.completed",
+          "runtime.error",
+        ],
+      );
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, ["http://127.0.0.1:9999/session"]);
+      NodeAssert.equal(
+        events[4]?.type === "turn.completed" ? events[4].payload.errorMessage : undefined,
+        expected,
+      );
+      NodeAssert.equal(
+        events[5]?.type === "runtime.error" ? events[5].payload.message : undefined,
+        expected,
+      );
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => runtimeMock.closeSubscribedEvents())),
+      Effect.provide(adapterLayer),
+    );
+  });
 
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
@@ -661,6 +1311,41 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         reasoningText: "hidden",
         hasInlineThinking: true,
       });
+    }),
+  );
+
+  it.effect("extracts actionable OpenCode session errors from provider response shapes", () =>
+    Effect.sync(() => {
+      NodeAssert.equal(
+        sessionErrorMessage({
+          error: {
+            message: "model openai/gpt-oss-120b does not exist",
+          },
+        }),
+        "model openai/gpt-oss-120b does not exist",
+      );
+      NodeAssert.equal(
+        sessionErrorMessage({
+          data: {
+            error: {
+              message: "rate limit exceeded",
+            },
+          },
+        }),
+        "rate limit exceeded",
+      );
+      NodeAssert.equal(
+        sessionErrorMessage({
+          name: "ContextOverflowError",
+          data: {
+            message:
+              "Request too large for model `llama-3.1-8b-instant` on tokens per minute (TPM): Limit 6000, Requested 42347",
+          },
+        }),
+        "Request too large for model `llama-3.1-8b-instant` on tokens per minute (TPM): Limit 6000, Requested 42347",
+      );
+      NodeAssert.equal(sessionErrorMessage("request timed out"), "request timed out");
+      NodeAssert.equal(sessionErrorMessage({}), "OpenCode session failed.");
     }),
   );
 

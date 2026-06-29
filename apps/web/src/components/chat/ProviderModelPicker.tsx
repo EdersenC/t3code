@@ -1,8 +1,10 @@
 import {
+  ProviderDriverKind,
   type ProviderInstanceId,
-  type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import type { ProviderDriverKind as ProviderDriverKindType } from "@t3tools/contracts";
+import { getOllamaModelDisplayName, getOllamaModelRuntimeSource } from "@t3tools/shared/model";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ChevronDownIcon } from "lucide-react";
@@ -18,6 +20,10 @@ import {
   getTriggerDisplayModelName,
 } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+import {
+  getModelRuntimeSourceBadgeClassName,
+  getModelRuntimeSourceLabel,
+} from "../../modelRuntimeSourcePresentation";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
@@ -26,7 +32,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
    */
   activeInstanceId: ProviderInstanceId;
   model: string;
-  lockedProvider: ProviderDriverKind | null;
+  lockedProvider: ProviderDriverKindType | null;
   lockedContinuationGroupKey?: string | null;
   /** Instance entries rendered in the sidebar + used to resolve display name. */
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
@@ -64,8 +70,20 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedModel =
     selectedInstanceOptions.find((option) => option.slug === props.model) ??
     selectedInstanceOptions[0];
-  const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
-  const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
+  const isActiveOllama = activeEntry?.driverKind === ProviderDriverKind.make("ollama");
+  const fallbackModelLabel = isActiveOllama
+    ? (getOllamaModelDisplayName(props.model) ?? props.model)
+    : props.model;
+  const triggerTitle = selectedModel
+    ? getTriggerDisplayModelName(selectedModel)
+    : fallbackModelLabel;
+  const triggerLabel = selectedModel
+    ? getTriggerDisplayModelLabel(selectedModel)
+    : fallbackModelLabel;
+  const runtimeSource =
+    selectedModel?.runtimeSource ??
+    (isActiveOllama ? getOllamaModelRuntimeSource(props.model) : undefined);
+  const runtimeBadgeLabel = runtimeSource ? getModelRuntimeSourceLabel(runtimeSource) : null;
   const duplicateDriverCount = props.instanceEntries.filter(
     (entry) => activeEntry !== null && entry.driverKind === activeEntry.driverKind,
   ).length;
@@ -180,6 +198,17 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
+          {runtimeSource && runtimeBadgeLabel ? (
+            <span
+              className={cn(
+                "shrink-0 rounded border px-1 py-px text-[9px] font-bold uppercase leading-none tracking-wide",
+                getModelRuntimeSourceBadgeClassName(runtimeSource),
+              )}
+              aria-label={`${runtimeBadgeLabel} model`}
+            >
+              {runtimeBadgeLabel}
+            </span>
+          ) : null}
         </span>
         <span aria-hidden="true" className="flex items-center">
           <ChevronDownIcon aria-hidden="true" className="!ms-0 !-me-1 size-3 shrink-0 opacity-60" />

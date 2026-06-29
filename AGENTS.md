@@ -39,6 +39,27 @@ Long term maintainability is a core priority. If you add new functionality, firs
 
 Use these as implementation references when designing protocol handling, UX flows, and operational safeguards.
 
+## OpenCode Harness Provider SDKs
+
+- When generating OpenCode provider config, prefer the provider's first-class AI SDK package when
+  OpenCode supports it. For Groq, use `@ai-sdk/groq` instead of routing through
+  `@ai-sdk/openai-compatible`.
+- Before adding or changing a custom OpenCode provider, inspect the local OpenCode reference clone
+  at `/home/eddy/Projects/opencode`, especially `packages/core/src/plugin/provider/` and
+  `packages/core/src/v1/config/provider-options.ts`, to confirm which SDK package and option shape
+  OpenCode expects.
+- Prefer OpenCode's own SDK and provider-plugin integration path before building direct HTTP
+  wrappers in T3 Code. T3 Code should generate OpenCode config, start/connect to the OpenCode
+  server, and consume the OpenCode SDK/event stream unless there is a documented gap that requires
+  a local shim.
+- If OpenCode already ships or uses an SDK for a provider, thread provider options through that
+  SDK/config shape instead of hand-rolling request translation. Keep any required "massaging" small,
+  documented, and covered by tests around the generated config.
+- Use `@ai-sdk/openai-compatible` only as a fallback for providers without a native OpenCode SDK
+  plugin, and make that fallback explicit in code/tests.
+- Keep provider research and implementation findings in `docs/providers/<provider>.md` when they
+  affect future provider behavior, access checks, or account-limit handling.
+
 ## Vendored Repositories
 
 This project vendors external repositories under `.repos/` as read-only reference material for coding

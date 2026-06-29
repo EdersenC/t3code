@@ -152,7 +152,11 @@ import { getProviderModelCapabilities, resolveSelectableProvider } from "../prov
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
-import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import {
+  resolveNewDraftStartFromOrigin,
+  startFreshThreadFromContext,
+} from "../lib/chatThreadActions";
+import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -1046,6 +1050,12 @@ function ChatViewContent(props: ChatViewProps) {
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
   const navigate = useNavigate();
+  const {
+    activeDraftThread: clearCommandActiveDraftThread,
+    activeThread: clearCommandActiveThread,
+    defaultProjectRef: clearCommandDefaultProjectRef,
+    handleNewThread: handleClearCommandNewThread,
+  } = useHandleNewThread();
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
@@ -3716,11 +3726,33 @@ function ChatViewContent(props: ChatViewProps) {
       composerReviewComments.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
-    if (standaloneSlashCommand) {
+    const isCompactSlashCommand = standaloneSlashCommand === "compact";
+    if (standaloneSlashCommand === "plan" || standaloneSlashCommand === "default") {
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
+      return;
+    }
+    if (standaloneSlashCommand === "clear") {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      const didStartFreshThread = await startFreshThreadFromContext({
+        activeDraftThread: clearCommandActiveDraftThread,
+        activeThread: clearCommandActiveThread ?? undefined,
+        defaultProjectRef: clearCommandDefaultProjectRef,
+        handleNewThread: handleClearCommandNewThread,
+      });
+      if (!didStartFreshThread) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Could not start a fresh thread",
+            description: "Select a project before using /clear.",
+          }),
+        );
+      }
       return;
     }
     if (!hasSendableContent) {
@@ -3764,8 +3796,9 @@ function ChatViewContent(props: ChatViewProps) {
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    const promptTextForSend = isCompactSlashCommand ? "/compact" : promptForSend;
     const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+      appendTerminalContextsToPrompt(promptTextForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
     );
     const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
@@ -3850,7 +3883,7 @@ function ChatViewContent(props: ChatViewProps) {
         firstComposerImageName = firstComposerImage.name;
       }
     }
-    let titleSeed = trimmed;
+    let titleSeed = isCompactSlashCommand ? "Compact context" : trimmed;
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;
@@ -4513,6 +4546,12 @@ function ChatViewContent(props: ChatViewProps) {
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
+      const unavailableModel = providerStatuses
+        .find((provider) => provider.instanceId === instanceId)
+        ?.models.find((candidate) => candidate.slug === model);
+      if (unavailableModel?.disabledReason) {
+        return unavailableModel.disabledReason;
+      }
       if (!activeThread) {
         return null;
       }

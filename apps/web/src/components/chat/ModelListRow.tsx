@@ -12,6 +12,10 @@ import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import {
+  getModelRuntimeSourceBadgeClassName,
+  getModelRuntimeSourceLabel,
+} from "../../modelRuntimeSourcePresentation";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -38,9 +42,12 @@ export const ModelListRow = memo(function ModelListRow(props: {
   onToggleFavorite: () => void;
 }) {
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
-  const providerLabel = props.model.subProvider
-    ? `${props.providerDisplayName} · ${props.model.subProvider}`
-    : props.providerDisplayName;
+  const runtimeSource = props.model.runtimeSource;
+  const runtimeBadgeLabel = runtimeSource ? getModelRuntimeSourceLabel(runtimeSource) : null;
+  const providerLabel =
+    props.model.subProvider && !runtimeSource
+      ? `${props.providerDisplayName} · ${props.model.subProvider}`
+      : props.providerDisplayName;
 
   const row = (
     <ComboboxItem
@@ -67,6 +74,17 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 )}
           </div>
           {props.isSelected ? <CheckIcon className="size-3.5 shrink-0 text-blue-400" /> : null}
+          {runtimeSource && runtimeBadgeLabel ? (
+            <span
+              className={cn(
+                "shrink-0 rounded border px-1 py-px text-[10px] font-bold uppercase leading-none tracking-wide",
+                getModelRuntimeSourceBadgeClassName(runtimeSource),
+              )}
+              aria-label={`${runtimeBadgeLabel} model`}
+            >
+              {runtimeBadgeLabel}
+            </span>
+          ) : null}
           {props.showNewBadge ? (
             <span
               className="shrink-0 rounded border border-amber-500/35 bg-amber-500/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/12 dark:text-amber-200"

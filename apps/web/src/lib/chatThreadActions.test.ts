@@ -5,6 +5,7 @@ import {
   resolveThreadActionProjectRef,
   resolveNewDraftStartFromOrigin,
   startNewLocalThreadFromContext,
+  startFreshThreadFromContext,
   startNewThreadFromContext,
   type ChatThreadActionContext,
 } from "./chatThreadActions";
@@ -114,6 +115,33 @@ describe("chatThreadActions", () => {
       worktreePath: "/tmp/worktree",
       envMode: "worktree",
       startFromOrigin: false,
+    });
+  });
+
+  it("can force a fresh contextual draft thread", async () => {
+    const handleNewThread = vi.fn<ChatThreadActionContext["handleNewThread"]>(async () => {});
+
+    const didStart = await startFreshThreadFromContext(
+      createContext({
+        activeDraftThread: {
+          environmentId: ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          branch: "feature/refactor",
+          worktreePath: "/tmp/worktree",
+          envMode: "worktree",
+          startFromOrigin: true,
+        },
+        handleNewThread,
+      }),
+    );
+
+    expect(didStart).toBe(true);
+    expect(handleNewThread).toHaveBeenCalledWith(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), {
+      branch: "feature/refactor",
+      worktreePath: "/tmp/worktree",
+      envMode: "worktree",
+      startFromOrigin: true,
+      forceNewDraft: true,
     });
   });
 

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { serializeComposerFileLink, serializeComposerMentionPath } from "./composerTrigger.ts";
+import {
+  parseStandaloneComposerSlashCommand,
+  serializeComposerFileLink,
+  serializeComposerMentionPath,
+} from "./composerTrigger.ts";
 
 describe("serializeComposerMentionPath", () => {
   it("keeps simple mention paths unquoted", () => {
@@ -39,5 +43,23 @@ describe("serializeComposerFileLink", () => {
     expect(serializeComposerFileLink("@scope/package.json")).toBe(
       "[package.json](@scope/package.json)",
     );
+  });
+});
+
+describe("parseStandaloneComposerSlashCommand", () => {
+  it("parses app-native mode and clear commands", () => {
+    expect(parseStandaloneComposerSlashCommand(" /plan ")).toBe("plan");
+    expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
+    expect(parseStandaloneComposerSlashCommand("/clear")).toBe("clear");
+  });
+
+  it("parses standalone provider control commands", () => {
+    expect(parseStandaloneComposerSlashCommand("/compact")).toBe("compact");
+    expect(parseStandaloneComposerSlashCommand("/compact ")).toBe("compact");
+  });
+
+  it("keeps slash commands with message text as regular prompt text", () => {
+    expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/compact explain first")).toBeNull();
   });
 });

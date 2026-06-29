@@ -31,6 +31,7 @@ import {
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
+import { detailFromKnownErrorShape, isRecord } from "../provider/errorShapeUtils.ts";
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL = "30 seconds";
 
@@ -141,23 +142,12 @@ interface OpenCodeTextPart {
 }
 
 function getOpenCodePromptFailure(error: unknown): OpenCodePromptFailure | null {
-  if (!error || typeof error !== "object") {
-    return null;
-  }
-
   const name =
-    "name" in error && typeof error.name === "string" && error.name.trim().length > 0
+    isRecord(error) && typeof error.name === "string" && error.name.trim().length > 0
       ? error.name.trim()
       : undefined;
-  const message =
-    "data" in error &&
-    error.data &&
-    typeof error.data === "object" &&
-    "message" in error.data &&
-    typeof error.data.message === "string"
-      ? error.data.message.trim()
-      : "";
-  if (message.length > 0) {
+  const message = detailFromKnownErrorShape(error);
+  if (message) {
     return {
       ...(name ? { name } : {}),
       message,
@@ -514,7 +504,11 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           Effect.fail(
             new TextGenerationError({
               operation: cause.operation,
-              detail: describePromptDetail("OpenCode session.create request failed."),
+              detail: describePromptDetail(
+                "OpenCode session.create request failed. Details: " +
+                  (detailFromKnownErrorShape(cause.cause) ??
+                    "The provider did not return an error message."),
+              ),
               cause,
             }),
           ),
@@ -530,7 +524,11 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           Effect.fail(
             new TextGenerationError({
               operation: cause.operation,
-              detail: describePromptDetail("OpenCode session.prompt request failed."),
+              detail: describePromptDetail(
+                "OpenCode session.prompt request failed. Details: " +
+                  (detailFromKnownErrorShape(cause.cause) ??
+                    "The provider did not return an error message."),
+              ),
               cause,
             }),
           ),

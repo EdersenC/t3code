@@ -53,6 +53,8 @@ import {
 } from "../opencodeRuntime.ts";
 import * as Option from "effect/Option";
 
+import { detailFromKnownErrorShape } from "../errorShapeUtils.ts";
+
 const DEFAULT_PROVIDER = ProviderDriverKind.make("opencode");
 
 interface OpenCodeTurnSnapshot {
@@ -64,6 +66,12 @@ interface OpenCodeTurnInputSnapshot {
   readonly text: string;
   readonly attachmentCount: number;
   readonly modelSelection?: ModelSelection | undefined;
+}
+
+interface OpenCodeTurnOutputSnapshot {
+  assistantTextChars: number;
+  reasoningTextChars: number;
+  completedItemCount: number;
 }
 
 type OpenCodeSubscribedEvent =
@@ -86,9 +94,13 @@ interface OpenCodeSessionContext {
   readonly rawTextByPartId: Map<string, string>;
   readonly emittedTextByPartId: Map<string, string>;
   readonly emittedReasoningTextByPartId: Map<string, string>;
+  readonly nextTextByTurnId: Map<TurnId, string>;
+  readonly nextReasoningTextById: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   readonly turnInputs: Map<TurnId, OpenCodeTurnInputSnapshot>;
+  readonly turnOutputById: Map<TurnId, OpenCodeTurnOutputSnapshot>;
+  suppressSubscribedEventsUntilNextTurn: boolean;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
@@ -115,6 +127,7 @@ export interface OpenCodeErrorDetailInput {
   readonly threadId?: ThreadId | undefined;
   readonly modelSelection?: ModelSelection | undefined;
   readonly phase?: "load" | "answer" | undefined;
+  readonly emptyOutput?: boolean | undefined;
 }
 
 export interface OpenCodeTokenUsageEstimateInput {
@@ -142,6 +155,8 @@ export interface OpenCodeAdapterLiveOptions {
     input: OpenCodeTokenUsageEstimateInput,
   ) => Effect.Effect<ThreadTokenUsageSnapshot | undefined>;
   readonly splitInlineThinking?: boolean | undefined;
+  readonly failTurnOnStepFailure?: boolean | undefined;
+  readonly failTurnOnRetryStatus?: boolean | undefined;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -275,6 +290,44 @@ function appendTurnItem(
     return;
   }
   resolveTurnSnapshot(context, turnId).items.push(item);
+}
+
+function markTurnOutput(
+  context: OpenCodeSessionContext,
+  turnId: TurnId | undefined,
+  patch: Partial<OpenCodeTurnOutputSnapshot>,
+): void {
+  if (turnId === undefined) {
+    return;
+  }
+  const previous = context.turnOutputById.get(turnId) ?? {
+    assistantTextChars: 0,
+    reasoningTextChars: 0,
+    completedItemCount: 0,
+  };
+  context.turnOutputById.set(turnId, {
+    assistantTextChars: previous.assistantTextChars + (patch.assistantTextChars ?? 0),
+    reasoningTextChars: previous.reasoningTextChars + (patch.reasoningTextChars ?? 0),
+    completedItemCount: previous.completedItemCount + (patch.completedItemCount ?? 0),
+  });
+}
+
+function hasTurnOutput(context: OpenCodeSessionContext, turnId: TurnId): boolean {
+  const output = context.turnOutputById.get(turnId);
+  return output !== undefined && (output.assistantTextChars > 0 || output.reasoningTextChars > 0);
+}
+
+function isFatalRetryStatusMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("request too large") ||
+    lower.includes("tokens per minute") ||
+    lower.includes(" tpm") ||
+    lower.includes("rate limit") ||
+    lower.includes("rate_limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("429")
+  );
 }
 
 function ensureSessionContext(
@@ -476,15 +529,8 @@ function toolStateCreatedAt(part: Extract<Part, { type: "tool" }>): string | und
   }
 }
 
-function sessionErrorMessage(error: unknown): string {
-  if (!error || typeof error !== "object") {
-    return "OpenCode session failed.";
-  }
-  const data = "data" in error && error.data && typeof error.data === "object" ? error.data : null;
-  const message = data && "message" in data ? data.message : null;
-  return typeof message === "string" && message.trim().length > 0
-    ? message
-    : "OpenCode session failed.";
+export function sessionErrorMessage(error: unknown): string {
+  return detailFromKnownErrorShape(error) ?? "OpenCode session failed.";
 }
 
 function updateProviderSession(
@@ -826,6 +872,9 @@ export function makeOpenCodeAdapter(
             text: assistantUpdate.latestText,
           } satisfies Part);
           if (assistantUpdate.deltaToEmit.length > 0) {
+            markTurnOutput(context, turnId, {
+              assistantTextChars: assistantUpdate.deltaToEmit.length,
+            });
             yield* emitTextDelta({
               streamKind: "assistant_text",
               delta: assistantUpdate.deltaToEmit,
@@ -852,6 +901,7 @@ export function makeOpenCodeAdapter(
                   : {}),
               },
             });
+            markTurnOutput(context, turnId, { completedItemCount: 1 });
             clearAssistantTextCaches(context, part.id);
           }
           return;
@@ -870,6 +920,9 @@ export function makeOpenCodeAdapter(
         );
       }
       if (deltaToEmit.length > 0) {
+        if (resolveTextStreamKind(part) === "assistant_text") {
+          markTurnOutput(context, turnId, { assistantTextChars: deltaToEmit.length });
+        }
         yield* emitTextDelta({
           streamKind: resolveTextStreamKind(part),
           delta: deltaToEmit,
@@ -898,8 +951,137 @@ export function makeOpenCodeAdapter(
             ...(latestText.length > 0 ? { detail: latestText } : {}),
           },
         });
+        markTurnOutput(context, turnId, { completedItemCount: 1 });
         clearAssistantTextCaches(context, part.id);
       }
+    });
+
+    const emitNextTextDelta = Effect.fn("emitNextTextDelta")(function* (
+      context: OpenCodeSessionContext,
+      input: {
+        readonly turnId: TurnId | undefined;
+        readonly itemId: string;
+        readonly streamKind: "assistant_text" | "reasoning_text";
+        readonly delta: string;
+        readonly createdAt?: string | undefined;
+        readonly raw: unknown;
+      },
+    ) {
+      if (input.delta.length === 0) {
+        return;
+      }
+      if (input.streamKind === "assistant_text") {
+        markTurnOutput(context, input.turnId, { assistantTextChars: input.delta.length });
+      } else {
+        markTurnOutput(context, input.turnId, { reasoningTextChars: input.delta.length });
+      }
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: input.turnId,
+          itemId: input.itemId,
+          createdAt: input.createdAt,
+          raw: input.raw,
+        })),
+        type: "content.delta",
+        payload: {
+          streamKind: input.streamKind,
+          delta: input.delta,
+        },
+      });
+    });
+
+    const emitNextTextEnded = Effect.fn("emitNextTextEnded")(function* (
+      context: OpenCodeSessionContext,
+      input: {
+        readonly turnId: TurnId | undefined;
+        readonly itemId: string;
+        readonly text: string;
+        readonly createdAt?: string | undefined;
+        readonly raw: unknown;
+      },
+    ) {
+      if (input.turnId) {
+        const previous = context.nextTextByTurnId.get(input.turnId);
+        const { latestText, deltaToEmit } = mergeOpenCodeAssistantText(previous, input.text);
+        context.nextTextByTurnId.set(input.turnId, latestText);
+        yield* emitNextTextDelta(context, {
+          turnId: input.turnId,
+          itemId: input.itemId,
+          streamKind: "assistant_text",
+          delta: deltaToEmit,
+          createdAt: input.createdAt,
+          raw: input.raw,
+        });
+      }
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: input.turnId,
+          itemId: input.itemId,
+          createdAt: input.createdAt,
+          raw: input.raw,
+        })),
+        type: "item.completed",
+        payload: {
+          itemType: "assistant_message",
+          status: "completed",
+          title: "Assistant message",
+          ...(input.text.length > 0 ? { detail: input.text } : {}),
+        },
+      });
+      markTurnOutput(context, input.turnId, { completedItemCount: 1 });
+    });
+
+    const failActiveTurnAndAbort = Effect.fn("failActiveTurnAndAbort")(function* (
+      context: OpenCodeSessionContext,
+      input: {
+        readonly turnId: TurnId;
+        readonly message: string;
+        readonly detail: unknown;
+        readonly raw: unknown;
+      },
+    ) {
+      context.activeTurnId = undefined;
+      context.activeAgent = undefined;
+      context.activeVariant = undefined;
+      context.suppressSubscribedEventsUntilNextTurn = true;
+      yield* updateProviderSession(
+        context,
+        {
+          status: "error",
+          lastError: input.message,
+        },
+        { clearActiveTurnId: true },
+      );
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: input.turnId,
+          raw: input.raw,
+        })),
+        type: "turn.completed",
+        payload: {
+          state: "failed",
+          errorMessage: input.message,
+        },
+      });
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: input.turnId,
+          raw: input.raw,
+        })),
+        type: "runtime.error",
+        payload: {
+          message: input.message,
+          class: "provider_error",
+          detail: input.detail,
+        },
+      });
+      yield* runOpenCodeSdk("session.abort", () =>
+        context.client.session.abort({ sessionID: context.openCodeSessionId }),
+      ).pipe(Effect.ignore);
     });
 
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
@@ -924,6 +1106,10 @@ export function makeOpenCodeAdapter(
           payload: event,
         },
       });
+
+      if (context.suppressSubscribedEventsUntilNextTurn) {
+        return;
+      }
 
       switch (event.type) {
         case "message.updated": {
@@ -1018,7 +1204,127 @@ export function makeOpenCodeAdapter(
               payload,
             };
             appendTurnItem(context, turnId, part);
+            if (runtimeEvent.type === "item.completed") {
+              markTurnOutput(context, turnId, { completedItemCount: 1 });
+            }
             yield* emit(runtimeEvent);
+          }
+          break;
+        }
+
+        case "session.next.text.started": {
+          if (turnId) {
+            context.nextTextByTurnId.set(turnId, "");
+          }
+          break;
+        }
+
+        case "session.next.text.delta": {
+          const delta = event.properties.delta;
+          if (turnId && delta.length > 0) {
+            context.nextTextByTurnId.set(
+              turnId,
+              (context.nextTextByTurnId.get(turnId) ?? "") + delta,
+            );
+          }
+          yield* emitNextTextDelta(context, {
+            turnId,
+            itemId: turnId ? `session-next-text:${turnId}` : event.id,
+            streamKind: "assistant_text",
+            delta,
+            createdAt: isoFromEpochMs(event.properties.timestamp),
+            raw: event,
+          });
+          break;
+        }
+
+        case "session.next.text.ended": {
+          yield* emitNextTextEnded(context, {
+            turnId,
+            itemId: turnId ? `session-next-text:${turnId}` : event.id,
+            text: event.properties.text,
+            createdAt: isoFromEpochMs(event.properties.timestamp),
+            raw: event,
+          });
+          if (turnId) {
+            context.nextTextByTurnId.delete(turnId);
+          }
+          break;
+        }
+
+        case "session.next.reasoning.started": {
+          context.nextReasoningTextById.set(event.properties.reasoningID, "");
+          break;
+        }
+
+        case "session.next.reasoning.delta": {
+          const delta = event.properties.delta;
+          if (delta.length > 0) {
+            context.nextReasoningTextById.set(
+              event.properties.reasoningID,
+              (context.nextReasoningTextById.get(event.properties.reasoningID) ?? "") + delta,
+            );
+          }
+          yield* emitNextTextDelta(context, {
+            turnId,
+            itemId: event.properties.reasoningID,
+            streamKind: "reasoning_text",
+            delta,
+            createdAt: isoFromEpochMs(event.properties.timestamp),
+            raw: event,
+          });
+          break;
+        }
+
+        case "session.next.reasoning.ended": {
+          const previous = context.nextReasoningTextById.get(event.properties.reasoningID);
+          const { deltaToEmit } = mergeOpenCodeAssistantText(previous, event.properties.text);
+          yield* emitNextTextDelta(context, {
+            turnId,
+            itemId: event.properties.reasoningID,
+            streamKind: "reasoning_text",
+            delta: deltaToEmit,
+            createdAt: isoFromEpochMs(event.properties.timestamp),
+            raw: event,
+          });
+          context.nextReasoningTextById.delete(event.properties.reasoningID);
+          break;
+        }
+
+        case "session.next.step.failed": {
+          const rawMessage = sessionErrorMessage(event.properties.error);
+          const turnInput = turnId ? context.turnInputs.get(turnId) : undefined;
+          const message = describeErrorDetail({
+            method: "session.next.step.failed",
+            detail: rawMessage,
+            threadId: context.session.threadId,
+            modelSelection: turnInput?.modelSelection,
+            phase: "answer",
+          });
+          yield* updateProviderSession(context, {
+            status: "running",
+            activeTurnId: turnId,
+            lastError: message,
+          });
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId,
+              raw: event,
+            })),
+            type: "runtime.warning",
+            payload: {
+              message,
+              detail: event.properties.error,
+            },
+          });
+          if (options?.failTurnOnStepFailure === true && turnId) {
+            yield* failActiveTurnAndAbort(context, {
+              turnId,
+              message,
+              detail: event.properties.error,
+              raw: event,
+            });
           }
           break;
         }
@@ -1126,6 +1432,39 @@ export function makeOpenCodeAdapter(
           }
 
           if (event.properties.status.type === "retry") {
+            if (
+              options?.failTurnOnRetryStatus === true &&
+              turnId &&
+              isFatalRetryStatusMessage(event.properties.status.message)
+            ) {
+              const turnInput = context.turnInputs.get(turnId);
+              const message = describeErrorDetail({
+                method: "session.status.retry",
+                detail: event.properties.status.message,
+                threadId: context.session.threadId,
+                modelSelection: turnInput?.modelSelection,
+                phase: "answer",
+              });
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  raw: event,
+                })),
+                type: "runtime.warning",
+                payload: {
+                  message,
+                  detail: event.properties.status,
+                },
+              });
+              yield* failActiveTurnAndAbort(context, {
+                turnId,
+                message,
+                detail: event.properties.status,
+                raw: event,
+              });
+              break;
+            }
             yield* emit({
               ...(yield* buildEventBase({
                 threadId: context.session.threadId,
@@ -1142,6 +1481,60 @@ export function makeOpenCodeAdapter(
           }
 
           if (event.properties.status.type === "idle" && turnId) {
+            const turnInput = context.turnInputs.get(turnId);
+            const lastHarnessError = context.session.lastError?.trim();
+            if (
+              (lastHarnessError && lastHarnessError.length > 0) ||
+              !hasTurnOutput(context, turnId)
+            ) {
+              const message =
+                lastHarnessError && lastHarnessError.length > 0
+                  ? lastHarnessError
+                  : describeErrorDetail({
+                      method: "session.status",
+                      detail: "OpenCode returned empty output.",
+                      threadId: context.session.threadId,
+                      modelSelection: turnInput?.modelSelection,
+                      phase: "answer",
+                      emptyOutput: true,
+                    });
+              context.activeTurnId = undefined;
+              context.suppressSubscribedEventsUntilNextTurn = true;
+              yield* updateProviderSession(
+                context,
+                {
+                  status: "error",
+                  lastError: message,
+                },
+                { clearActiveTurnId: true },
+              );
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  raw: event,
+                })),
+                type: "turn.completed",
+                payload: {
+                  state: "failed",
+                  errorMessage: message,
+                },
+              });
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  raw: event,
+                })),
+                type: "runtime.error",
+                payload: {
+                  message,
+                  class: "provider_error",
+                  detail: event.properties.status,
+                },
+              });
+              break;
+            }
             context.activeTurnId = undefined;
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emitEstimatedTokenUsage(context, turnId, event);
@@ -1172,6 +1565,7 @@ export function makeOpenCodeAdapter(
             phase: "answer",
           });
           context.activeTurnId = undefined;
+          context.suppressSubscribedEventsUntilNextTurn = true;
           yield* updateProviderSession(
             context,
             {
@@ -1197,6 +1591,7 @@ export function makeOpenCodeAdapter(
           yield* emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
+              turnId: activeTurnId,
               raw: event,
             })),
             type: "runtime.error",
@@ -1409,10 +1804,14 @@ export function makeOpenCodeAdapter(
           rawTextByPartId: new Map(),
           emittedTextByPartId: new Map(),
           emittedReasoningTextByPartId: new Map(),
+          nextTextByTurnId: new Map(),
+          nextReasoningTextById: new Map(),
           messageRoleById: new Map(),
           completedAssistantPartIds: new Set(),
           turns: [],
           turnInputs: new Map(),
+          turnOutputById: new Map(),
+          suppressSubscribedEventsUntilNextTurn: false,
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
@@ -1498,6 +1897,7 @@ export function makeOpenCodeAdapter(
       context.activeTurnId = turnId;
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
+      context.suppressSubscribedEventsUntilNextTurn = false;
       yield* updateProviderSession(
         context,
         {
@@ -1554,6 +1954,7 @@ export function makeOpenCodeAdapter(
                 context.activeAgent = undefined;
                 context.activeVariant = undefined;
                 context.turnInputs.delete(turnId);
+                context.turnOutputById.delete(turnId);
                 yield* updateProviderSession(
                   context,
                   {
