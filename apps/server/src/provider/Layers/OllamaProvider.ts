@@ -12,7 +12,12 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { createModelCapabilities } from "@t3tools/shared/model";
+import {
+  createModelCapabilities,
+  getOllamaModelDisplayName,
+  getOllamaModelRuntimeSource,
+  stripOllamaCloudModelSuffix,
+} from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { mergePathValues } from "@t3tools/shared/shell";
 import {
@@ -24,6 +29,7 @@ import {
   getOllamaVersion,
   listOllamaModels,
   listRunningOllamaModels,
+  checkOllamaCloudModelAccessibility,
   normalizeOllamaBaseUrl,
   type OllamaFetch,
   type OllamaRunningModel,
@@ -34,6 +40,8 @@ import {
   isOllamaRunningModelGpuResident,
   normalizeOllamaModelId,
   ollamaModelIdsForConfig,
+  OLLAMA_REASONING_EFFORT_DEFAULT,
+  OLLAMA_REASONING_EFFORT_OPTION_ID,
   toOllamaOpenCodeModelSlug,
 } from "../ollamaOpenCode.ts";
 import { flattenOpenCodeModels, MINIMUM_OPENCODE_VERSION } from "./OpenCodeProvider.ts";
@@ -45,15 +53,108 @@ import {
 
 const PROVIDER = ProviderDriverKind.make("ollama");
 const OPENCODE_COMMAND = "opencode";
+const OLLAMA_CLOUD_MODEL_AVAILABILITY_CHECK_TTL_MS = 5 * 60_000;
+const OLLAMA_CLOUD_MODEL_AVAILABILITY_CHECKS_PER_REFRESH = 4;
+const OLLAMA_CLOUD_MODEL_AVAILABILITY_PROBE_TIMEOUT_MS = 2_500;
 const OLLAMA_PRESENTATION = {
   displayName: "Ollama",
   showInteractionModeToggle: false,
 } as const;
 
+type CachedCloudModelAvailability = {
+  readonly checkedAt: number;
+  readonly result: {
+    readonly available: boolean;
+    readonly reason: string | null;
+  };
+};
+
+type CloudModelProbeResult = {
+  readonly available: boolean;
+  readonly reason: string | null;
+};
+
+const cloudModelAvailabilityCache = new Map<string, CachedCloudModelAvailability>();
+const cloudModelAvailabilityInFlight = new Map<string, Promise<CloudModelProbeResult>>();
+
 class OllamaProbeError extends Data.TaggedError("OllamaProbeError")<{
   readonly cause: unknown;
   readonly detail: string;
 }> {}
+
+function nowMillis(): number {
+  return DateTime.toEpochMillis(DateTime.nowUnsafe());
+}
+
+function resolveCloudModelProbeKey(baseUrl: string, model: string): string {
+  return `${normalizeOllamaBaseUrl(baseUrl)}|${model.trim().toLowerCase()}`;
+}
+
+function shouldReuseCloudAvailabilityCache(
+  cache: CachedCloudModelAvailability,
+  now: number,
+): boolean {
+  return now - cache.checkedAt <= OLLAMA_CLOUD_MODEL_AVAILABILITY_CHECK_TTL_MS;
+}
+
+function resolveCloudModelProbeOptions(input: OllamaProviderOptions): {
+  readonly fetchFn?: OllamaFetch | undefined;
+  readonly timeoutMs?: number | undefined;
+} {
+  return {
+    ...input,
+    timeoutMs:
+      input.timeoutMs !== undefined
+        ? Math.min(input.timeoutMs, OLLAMA_CLOUD_MODEL_AVAILABILITY_PROBE_TIMEOUT_MS)
+        : OLLAMA_CLOUD_MODEL_AVAILABILITY_PROBE_TIMEOUT_MS,
+  };
+}
+
+async function checkOllamaCloudModelAvailabilityCached(
+  ollamaSettings: Pick<OllamaSettings, "baseUrl">,
+  model: string,
+  options: OllamaProviderOptions,
+): Promise<CloudModelProbeResult> {
+  const cacheKey = resolveCloudModelProbeKey(ollamaSettings.baseUrl, model);
+  const now = nowMillis();
+  const cached = cloudModelAvailabilityCache.get(cacheKey);
+  if (cached && shouldReuseCloudAvailabilityCache(cached, now)) {
+    return cached.result;
+  }
+
+  const inFlight = cloudModelAvailabilityInFlight.get(cacheKey);
+  if (inFlight !== undefined) {
+    return inFlight;
+  }
+
+  const probe = (async (): Promise<CloudModelProbeResult> => {
+    const probeResult = await checkOllamaCloudModelAccessibility(
+      ollamaSettings,
+      { model },
+      {
+        ...resolveCloudModelProbeOptions(options),
+      },
+    );
+
+    const result: CloudModelProbeResult = {
+      available: probeResult.available,
+      reason: probeResult.reason,
+    };
+
+    if (result.available || result.reason !== null) {
+      cloudModelAvailabilityCache.set(cacheKey, { checkedAt: nowMillis(), result });
+    }
+
+    return result;
+  })();
+
+  cloudModelAvailabilityInFlight.set(cacheKey, probe);
+  probe.finally(() => {
+    cloudModelAvailabilityInFlight.delete(cacheKey);
+  });
+
+  return probe;
+}
 
 export function resolveOllamaOpenCodeBinaryPath(binaryPath: string): string {
   return binaryPath.trim() || OPENCODE_COMMAND;
@@ -85,20 +186,41 @@ export interface OllamaProviderOptions {
 }
 
 const DEFAULT_OLLAMA_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
-  optionDescriptors: [],
+  optionDescriptors: [
+    {
+      id: OLLAMA_REASONING_EFFORT_OPTION_ID,
+      label: "Reasoning",
+      description: "Override Ollama thinking effort for models that support reasoning.",
+      type: "select",
+      options: [
+        { id: OLLAMA_REASONING_EFFORT_DEFAULT, label: "Default", isDefault: true },
+        { id: "none", label: "None" },
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+      ],
+      currentValue: OLLAMA_REASONING_EFFORT_DEFAULT,
+    },
+  ],
 });
 
 function modelDisplayName(modelId: string): string {
-  return modelId.trim() || normalizeOllamaModelId(DEFAULT_OLLAMA_MODEL)!;
+  return (
+    getOllamaModelDisplayName(modelId) ??
+    getOllamaModelDisplayName(normalizeOllamaModelId(DEFAULT_OLLAMA_MODEL)) ??
+    normalizeOllamaModelId(DEFAULT_OLLAMA_MODEL)!
+  );
 }
 
 function modelEntryFromId(modelId: string, isCustom: boolean): ServerProviderModel | null {
   const slug = toOllamaOpenCodeModelSlug(modelId);
   if (!slug) return null;
+  const runtimeSource = getOllamaModelRuntimeSource(slug);
   return {
     slug,
     name: modelDisplayName(modelId),
-    subProvider: "Local",
+    subProvider: runtimeSource === "cloud" ? "Cloud" : "Local",
+    runtimeSource,
     isCustom,
     capabilities: DEFAULT_OLLAMA_MODEL_CAPABILITIES,
   };
@@ -161,7 +283,23 @@ function describeRunningModel(model: OllamaRunningModel): string {
 function ollamaModelsFromOpenCodeInventory(
   inventory: OpenCodeInventory,
 ): ReadonlyArray<ServerProviderModel> {
-  return flattenOpenCodeModels(inventory).filter((model) => model.slug.startsWith("ollama/"));
+  return flattenOpenCodeModels(inventory)
+    .filter((model) => model.slug.startsWith("ollama/"))
+    .map((model): ServerProviderModel => {
+      const runtimeSource = getOllamaModelRuntimeSource(model.slug);
+      const { shortName: rawShortName, ...rest } = model;
+      const name = getOllamaModelDisplayName(model.name) ?? stripOllamaCloudModelSuffix(model.name);
+      const shortName = rawShortName
+        ? (getOllamaModelDisplayName(rawShortName) ?? stripOllamaCloudModelSuffix(rawShortName))
+        : undefined;
+      return {
+        ...rest,
+        name,
+        ...(shortName ? { shortName } : {}),
+        subProvider: runtimeSource === "cloud" ? "Cloud" : "Local",
+        runtimeSource,
+      };
+    });
 }
 
 export const makePendingOllamaProvider = (
@@ -379,8 +517,69 @@ export const checkOllamaProviderStatus = Effect.fn("checkOllamaProviderStatus")(
   }
 
   const openCodeModels = ollamaModelsFromOpenCodeInventory(inventoryExit.value);
+
+  const cloudModels = openCodeModels.filter((model) => model.runtimeSource === "cloud");
+  const now = nowMillis();
+  const modelsWithFreshAvailability = new Map<string, CloudModelProbeResult>();
+
+  const staleCloudModels: Array<ServerProviderModel> = [];
+  for (const model of cloudModels) {
+    const probeModelId = normalizeOllamaModelId(model.slug) ?? model.slug;
+    const key = resolveCloudModelProbeKey(ollamaSettings.baseUrl, probeModelId);
+    const cached = cloudModelAvailabilityCache.get(key);
+    if (cached && shouldReuseCloudAvailabilityCache(cached, now)) {
+      modelsWithFreshAvailability.set(model.slug, cached.result);
+      continue;
+    }
+    staleCloudModels.push(model);
+  }
+
+  const cloudModelsToProbe = staleCloudModels.slice(
+    0,
+    OLLAMA_CLOUD_MODEL_AVAILABILITY_CHECKS_PER_REFRESH,
+  );
+  const cloudAvailabilityResults = yield* Effect.all(
+    cloudModelsToProbe.map((model) => {
+      const probeModelId = normalizeOllamaModelId(model.slug) ?? model.slug;
+      return Effect.tryPromise(() =>
+        checkOllamaCloudModelAvailabilityCached(ollamaSettings, probeModelId, {
+          fetchFn: options?.fetchFn,
+          timeoutMs: options?.timeoutMs,
+        }),
+      ).pipe(
+        Effect.orElseSucceed(() => ({ available: false, reason: null }) as CloudModelProbeResult),
+      );
+    }),
+    { concurrency: 2 },
+  );
+
+  for (const [index, model] of cloudModelsToProbe.entries()) {
+    const result = cloudAvailabilityResults[index];
+    if (result !== undefined) {
+      modelsWithFreshAvailability.set(model.slug, result);
+    }
+  }
+
+  const models = modelsWithConfiguredEntries(openCodeModels, ollamaSettings).map((model) => {
+    const availability =
+      model.runtimeSource === "cloud" ? modelsWithFreshAvailability.get(model.slug) : null;
+    if (!availability || availability.available || availability.reason === null) {
+      return model;
+    }
+
+    return {
+      ...model,
+      disabledReason: availability.reason,
+    };
+  });
+
   const hasOpenCodeOllamaModels = openCodeModels.length > 0;
-  const models = modelsWithConfiguredEntries(openCodeModels, ollamaSettings);
+  const openCodeCloudModelCount = openCodeModels.filter(
+    (model) => model.runtimeSource === "cloud",
+  ).length;
+  const configuredCloudModelCount = modelIds.filter(
+    (modelId) => getOllamaModelRuntimeSource(modelId) === "cloud",
+  ).length;
   const discoveredModelCount = ollamaProbeExit.value.discoveredModels.length;
   const runningModels = ollamaProbeExit.value.runningModels;
   const configuredModelIds = new Set(
@@ -395,7 +594,10 @@ export const checkOllamaProviderStatus = Effect.fn("checkOllamaProviderStatus")(
   const cpuOnlyModel = relevantRunningModels.find(isOllamaRunningModelCpuOnly);
   const gpuResidentCount = relevantRunningModels.filter(isOllamaRunningModelGpuResident).length;
   const hasCpuOnlyViolation = cpuOnlyModel !== undefined && !ollamaSettings.allowCpuFallback;
-  const hasOpenCodeProviderConfigViolation = discoveredModelCount > 0 && !hasOpenCodeOllamaModels;
+  const hasExpectedOllamaModels = discoveredModelCount > 0 || configuredCloudModelCount > 0;
+  const hasOpenCodeProviderConfigViolation = hasExpectedOllamaModels && !hasOpenCodeOllamaModels;
+  const hasUsableOllamaModels =
+    hasOpenCodeOllamaModels && (discoveredModelCount > 0 || configuredCloudModelCount > 0);
 
   return buildServerProvider({
     driver: PROVIDER,
@@ -412,7 +614,7 @@ export const checkOllamaProviderStatus = Effect.fn("checkOllamaProviderStatus")(
           ? "error"
           : cpuOnlyModel !== undefined
             ? "warning"
-            : hasOpenCodeOllamaModels && discoveredModelCount > 0
+            : hasUsableOllamaModels
               ? "ready"
               : "warning",
       auth: { status: "authenticated", type: "local", label: baseUrl },
@@ -435,13 +637,19 @@ export const checkOllamaProviderStatus = Effect.fn("checkOllamaProviderStatus")(
                   describeRunningModel(cpuOnlyModel) +
                   " is currently CPU-backed. Turn this off after freeing GPU memory to require GPU residency.",
               }
-            : hasOpenCodeOllamaModels && discoveredModelCount > 0
+            : hasUsableOllamaModels
               ? {
                   message:
                     "Ollama is reachable and OpenCode loaded " +
                     openCodeModels.length +
-                    " local model" +
+                    " Ollama model" +
                     (openCodeModels.length === 1 ? "" : "s") +
+                    (openCodeCloudModelCount > 0
+                      ? " including " +
+                        openCodeCloudModelCount +
+                        " cloud model" +
+                        (openCodeCloudModelCount === 1 ? "" : "s")
+                      : "") +
                     (gpuResidentCount > 0 ? " with GPU residency detected." : "."),
                 }
               : {

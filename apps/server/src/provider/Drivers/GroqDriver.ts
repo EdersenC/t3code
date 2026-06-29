@@ -1,6 +1,6 @@
 import {
-  DEFAULT_OLLAMA_MODEL,
-  OllamaSettings,
+  DEFAULT_GROQ_MODEL,
+  GroqSettings,
   OpenCodeSettings,
   ProviderDriverKind,
   type ModelSelection,
@@ -16,34 +16,29 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-
-import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { checkGroqProviderStatus, makePendingGroqProvider } from "../Layers/GroqCloudProvider.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
-import {
-  checkOllamaProviderStatus,
-  makePendingOllamaProvider,
-  resolveOllamaOpenCodeEnvironment,
-} from "../Layers/OllamaProvider.ts";
+import { resolveOllamaOpenCodeEnvironment } from "../Layers/OllamaProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import { OpenCodeRuntime } from "../opencodeRuntime.ts";
-import { getOllamaModelMetadata, listOllamaModels } from "../ollamaApi.ts";
+import { listGroqModels } from "../groqApi.ts";
 import {
-  buildOllamaOpenCodeConfig,
-  formatOllamaOpenCodeFailureDetail,
-  makeOllamaTokenUsageSnapshot,
-  normalizeOllamaModelId,
-  ollamaModelIdsFromCandidates,
-} from "../ollamaOpenCode.ts";
+  buildGroqOpenCodeConfig,
+  formatGroqOpenCodeFailureDetail,
+  isGroqOpenCodeConfiguredModel,
+  isGroqOpenCodeDiscoveredModel,
+  normalizeGroqModelId,
+} from "../groqOpenCode.ts";
+import { OpenCodeRuntime } from "../opencodeRuntime.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -51,18 +46,18 @@ import {
   normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
+import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 
-const decodeOllamaSettings = Schema.decodeSync(OllamaSettings);
+const decodeGroqSettings = Schema.decodeSync(GroqSettings);
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
-const DRIVER_KIND = ProviderDriverKind.make("ollama");
-const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(2);
-const OLLAMA_MODEL_DISCOVERY_TIMEOUT_MS = 4_000;
-const OLLAMA_CONTEXT_DISCOVERY_TIMEOUT_MS = 4_000;
+const DRIVER_KIND = ProviderDriverKind.make("groq");
+const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+const GROQ_MODEL_DISCOVERY_TIMEOUT_MS = 4_000;
 
 function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -84,7 +79,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   },
 });
 
-export type OllamaDriverEnv =
+export type GroqDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -111,7 +106,7 @@ const withInstanceIdentity =
     continuation: { groupKey: input.continuationGroupKey },
   });
 
-function makeHarnessSettings(settings: OllamaSettings): OpenCodeSettings {
+function makeHarnessSettings(settings: GroqSettings): OpenCodeSettings {
   return decodeOpenCodeSettings({
     enabled: settings.enabled,
     binaryPath: settings.binaryPath,
@@ -121,40 +116,37 @@ function makeHarnessSettings(settings: OllamaSettings): OpenCodeSettings {
   });
 }
 
-function modelIdForOllamaApi(settings: OllamaSettings, modelSelection?: ModelSelection): string {
-  return (
-    normalizeOllamaModelId(modelSelection?.model) ??
-    normalizeOllamaModelId(settings.customModels[0]) ??
-    normalizeOllamaModelId(DEFAULT_OLLAMA_MODEL)!
-  );
-}
-
-function makeConfigContentEffect(settings: OllamaSettings, modelSelection?: ModelSelection) {
+function makeConfigContentEffect(
+  settings: GroqSettings,
+  environment: NodeJS.ProcessEnv,
+  modelSelection?: ModelSelection,
+) {
   return Effect.promise(() =>
-    listOllamaModels(settings, { timeoutMs: OLLAMA_MODEL_DISCOVERY_TIMEOUT_MS }).catch(
-      () => [] as ReadonlyArray<string>,
+    listGroqModels(settings, environment, { timeoutMs: GROQ_MODEL_DISCOVERY_TIMEOUT_MS }).catch(
+      () => [],
     ),
   ).pipe(
     Effect.map((discoveredModels) => {
-      const modelIds = ollamaModelIdsFromCandidates([
-        ...discoveredModels,
-        modelSelection?.model,
-        ...settings.customModels,
-        DEFAULT_OLLAMA_MODEL,
-      ]);
-      return buildOllamaOpenCodeConfig({ settings, modelIds, modelSelection });
+      const selectedModel = modelSelection?.model;
+      const modelIds = [
+        ...discoveredModels.filter((model) => isGroqOpenCodeDiscoveredModel(model)),
+        ...(selectedModel && isGroqOpenCodeConfiguredModel(selectedModel) ? [selectedModel] : []),
+        ...settings.customModels.filter((model) => isGroqOpenCodeConfiguredModel(model)),
+        DEFAULT_GROQ_MODEL,
+      ];
+      return buildGroqOpenCodeConfig({ settings, modelIds, environment });
     }),
   );
 }
 
-export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
+export const GroqDriver: ProviderDriver<GroqSettings, GroqDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
-    displayName: "Ollama",
+    displayName: "Groq",
     supportsMultipleInstances: true,
   },
-  configSchema: OllamaSettings,
-  defaultConfig: (): OllamaSettings => decodeOllamaSettings({}),
+  configSchema: GroqSettings,
+  defaultConfig: (): GroqSettings => decodeGroqSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const openCodeRuntime = yield* OpenCodeRuntime;
@@ -174,40 +166,7 @@ export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const effectiveConfig = { ...config, enabled } satisfies OllamaSettings;
-      const contextWindowByModel = new Map<string, number | null>();
-      const describeFailureDetail = (input: {
-        readonly detail: string;
-        readonly modelSelection?: ModelSelection | undefined;
-        readonly emptyOutput?: boolean | undefined;
-      }) =>
-        formatOllamaOpenCodeFailureDetail({
-          detail: input.detail,
-          model: input.modelSelection?.model,
-          baseUrl: effectiveConfig.baseUrl,
-          emptyOutput: input.emptyOutput,
-        });
-      const resolveContextWindow = (modelSelection?: ModelSelection | undefined) => {
-        const modelId = modelIdForOllamaApi(effectiveConfig, modelSelection);
-        if (contextWindowByModel.has(modelId)) {
-          return Effect.succeed(contextWindowByModel.get(modelId) ?? null);
-        }
-        return Effect.promise(() =>
-          getOllamaModelMetadata(effectiveConfig, modelId, {
-            timeoutMs: OLLAMA_CONTEXT_DISCOVERY_TIMEOUT_MS,
-          })
-            .then((metadata) => metadata.contextWindow)
-            .catch(() => null),
-        ).pipe(
-          Effect.tap((contextWindow) =>
-            contextWindow === null
-              ? Effect.void
-              : Effect.sync(() => {
-                  contextWindowByModel.set(modelId, contextWindow);
-                }),
-          ),
-        );
-      };
+      const effectiveConfig = { ...config, enabled } satisfies GroqSettings;
       const runtimeEnvironment = resolveOllamaOpenCodeEnvironment(
         effectiveConfig.binaryPath,
         processEnv,
@@ -218,11 +177,22 @@ export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
         binaryPath: effectiveConfig.binaryPath,
         env: runtimeEnvironment,
       });
+      const describeFailureDetail = (input: {
+        readonly detail: string;
+        readonly modelSelection?: ModelSelection | undefined;
+        readonly emptyOutput?: boolean | undefined;
+      }) =>
+        formatGroqOpenCodeFailureDetail({
+          detail: input.detail,
+          model: normalizeGroqModelId(input.modelSelection?.model),
+          baseUrl: effectiveConfig.baseUrl,
+          emptyOutput: input.emptyOutput,
+        });
       const configContent = ({
         modelSelection,
       }: {
         readonly modelSelection?: ModelSelection | undefined;
-      }) => makeConfigContentEffect(effectiveConfig, modelSelection);
+      }) => makeConfigContentEffect(effectiveConfig, runtimeEnvironment, modelSelection);
 
       const adapter = yield* makeOpenCodeAdapter(openCodeSettings, {
         provider: DRIVER_KIND,
@@ -232,17 +202,8 @@ export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
         describeErrorDetail: ({ detail, modelSelection, emptyOutput }) =>
           describeFailureDetail({ detail, modelSelection, emptyOutput }),
         splitInlineThinking: true,
-        estimateTokenUsage: (input) =>
-          resolveContextWindow(input.modelSelection).pipe(
-            Effect.map((contextWindow) =>
-              makeOllamaTokenUsageSnapshot({
-                inputText: input.inputText,
-                assistantText: input.assistantText,
-                attachmentCount: input.attachmentCount,
-                contextWindow,
-              }),
-            ),
-          ),
+        failTurnOnStepFailure: true,
+        failTurnOnRetryStatus: true,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makeOpenCodeTextGeneration(
@@ -250,27 +211,27 @@ export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
         runtimeEnvironment,
         {
           resolveConfigContent: ({ modelSelection }) =>
-            makeConfigContentEffect(effectiveConfig, modelSelection),
+            makeConfigContentEffect(effectiveConfig, runtimeEnvironment, modelSelection),
           describeErrorDetail: ({ detail, modelSelection, emptyOutput }) =>
             describeFailureDetail({ detail, modelSelection, emptyOutput }),
         },
       );
 
-      const checkProvider = checkOllamaProviderStatus(
+      const checkProvider = checkGroqProviderStatus(
         effectiveConfig,
         serverConfig.cwd,
         runtimeEnvironment,
-        { timeoutMs: OLLAMA_MODEL_DISCOVERY_TIMEOUT_MS },
+        { timeoutMs: GROQ_MODEL_DISCOVERY_TIMEOUT_MS },
       ).pipe(Effect.map(stampIdentity), Effect.provideService(OpenCodeRuntime, openCodeRuntime));
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OllamaSettings>>({
+      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GroqSettings>>({
         maintenanceCapabilities,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          makePendingOllamaProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+          makePendingGroqProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
@@ -286,7 +247,7 @@ export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: "Failed to build Ollama snapshot: " + (cause.message ?? String(cause)),
+              detail: "Failed to build Groq snapshot: " + (cause.message ?? String(cause)),
               cause,
             }),
         ),

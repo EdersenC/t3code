@@ -19,6 +19,7 @@ import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -27,7 +28,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
-import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import { ProviderAdapterProcessError, ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -42,6 +43,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
+const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 type ProviderIntentEvent = Extract<
@@ -163,6 +165,37 @@ function stalePendingRequestDetail(
   return `Stale pending ${requestKind} request: ${requestId}. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`;
 }
 
+function formatKnownFailureError(error: unknown): string | undefined {
+  if (isProviderAdapterRequestError(error)) {
+    return error.detail;
+  }
+  if (isProviderAdapterProcessError(error)) {
+    return error.detail;
+  }
+
+  const textGenerationError =
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "TextGenerationError" &&
+    "operation" in error &&
+    typeof error.operation === "string" &&
+    "detail" in error &&
+    typeof error.detail === "string"
+      ? error
+      : undefined;
+  if (textGenerationError) {
+    return (
+      "Text generation failed in " +
+      textGenerationError.operation +
+      ": " +
+      textGenerationError.detail
+    );
+  }
+
+  return error instanceof Error ? error.message : undefined;
+}
+
 function buildGeneratedWorktreeBranchName(raw: string): string {
   const normalized = raw
     .trim()
@@ -196,6 +229,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -212,12 +246,20 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const resolveExistingDirectory = Effect.fn("ProviderCommandReactor.resolveExistingDirectory")(
+    function* (path: string) {
+      const stat = yield* fileSystem.stat(path).pipe(Effect.orElseSucceed(() => null));
+      return stat?.type === "Directory" ? path : null;
+    },
+  );
+
   const threadModelSelections = new Map<string, ModelSelection>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
     readonly kind:
       | "provider.turn.start.failed"
+      | "provider.thread-title.generate.failed"
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
@@ -256,13 +298,7 @@ const make = Effect.gen(function* () {
 
   const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
     const failReason = cause.reasons.find(Cause.isFailReason);
-    const providerError = isProviderAdapterRequestError(failReason?.error)
-      ? failReason.error
-      : undefined;
-    if (providerError) {
-      return providerError.detail;
-    }
-    return Cause.pretty(cause);
+    return formatKnownFailureError(failReason?.error) ?? Cause.pretty(cause);
   };
 
   const setThreadSession = (input: {
@@ -706,14 +742,27 @@ const make = Effect.gen(function* () {
       readonly messageText: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
       readonly titleSeed?: string;
+      readonly createdAt: string;
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
+        const generationCwd = (yield* resolveExistingDirectory(input.cwd)) ?? process.cwd();
+        if (generationCwd !== input.cwd) {
+          yield* Effect.logWarning(
+            "provider command reactor falling back for thread title generation because cwd is unavailable",
+            {
+              threadId: input.threadId,
+              cwd: input.cwd,
+              fallbackCwd: generationCwd,
+            },
+          );
+        }
+
         const { textGenerationModelSelection: modelSelection } =
           yield* serverSettingsService.getSettings;
 
         const generated = yield* textGeneration.generateThreadTitle({
-          cwd: input.cwd,
+          cwd: generationCwd,
           message: input.messageText,
           ...(attachments.length > 0 ? { attachments } : {}),
           modelSelection,
@@ -733,13 +782,66 @@ const make = Effect.gen(function* () {
           title: generated.title,
         });
       }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("provider command reactor failed to generate or rename thread title", {
-            threadId: input.threadId,
-            cwd: input.cwd,
-            cause: Cause.pretty(cause),
-          }),
-        ),
+        Effect.catch((error) => {
+          const detail = formatKnownFailureError(error) ?? "Thread title generation failed.";
+          return Effect.logWarning(
+            "provider command reactor failed to generate or rename thread title",
+            {
+              threadId: input.threadId,
+              cwd: input.cwd,
+              cause: detail,
+            },
+          ).pipe(
+            Effect.flatMap(() =>
+              appendProviderFailureActivity({
+                threadId: input.threadId,
+                kind: "provider.thread-title.generate.failed",
+                summary: "Thread title generation failed",
+                detail,
+                turnId: null,
+                createdAt: input.createdAt,
+              }),
+            ),
+            Effect.catchCause((activityCause) =>
+              Effect.logWarning("provider command reactor failed to publish thread title failure", {
+                threadId: input.threadId,
+                cwd: input.cwd,
+                cause: Cause.pretty(activityCause),
+                originalCause: detail,
+              }),
+            ),
+          );
+        }),
+        Effect.catchCause((cause) => {
+          const detail = formatFailureDetail(cause);
+          return Effect.logWarning(
+            "provider command reactor failed to generate or rename thread title",
+            {
+              threadId: input.threadId,
+              cwd: input.cwd,
+              cause: Cause.pretty(cause),
+            },
+          ).pipe(
+            Effect.flatMap(() =>
+              appendProviderFailureActivity({
+                threadId: input.threadId,
+                kind: "provider.thread-title.generate.failed",
+                summary: "Thread title generation failed",
+                detail,
+                turnId: null,
+                createdAt: input.createdAt,
+              }),
+            ),
+            Effect.catchCause((activityCause) =>
+              Effect.logWarning("provider command reactor failed to publish thread title failure", {
+                threadId: input.threadId,
+                cwd: input.cwd,
+                cause: Cause.pretty(activityCause),
+                originalCause: Cause.pretty(cause),
+              }),
+            ),
+          );
+        }),
       );
     },
   );
@@ -796,6 +898,7 @@ const make = Effect.gen(function* () {
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
           cwd: generationCwd,
+          createdAt: event.payload.createdAt,
           ...generationInput,
         }).pipe(Effect.forkScoped);
       }

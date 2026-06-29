@@ -1,16 +1,26 @@
 import {
   DEFAULT_OLLAMA_MODEL,
+  type ModelSelection,
   type OllamaSettings,
   type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
+import {
+  getOllamaModelDisplayName,
+  getProviderOptionStringSelectionValue,
+  isOllamaCloudModelId,
+  stripOllamaCloudModelSuffix,
+} from "@t3tools/shared/model";
 
 import { normalizeOllamaBaseUrl, type OllamaRunningModel } from "./ollamaApi.ts";
 
 export const OLLAMA_OPENCODE_PROVIDER_ID = "ollama";
 export const OLLAMA_OPENCODE_PROVIDER_NAME = "Ollama (local)";
 export const OLLAMA_OPENAI_COMPATIBLE_PACKAGE = "@ai-sdk/openai-compatible";
+export const OLLAMA_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
+export const OLLAMA_REASONING_EFFORT_DEFAULT = "auto";
 export const DEFAULT_OLLAMA_CONTEXT_WINDOW = 4096;
 const ESTIMATED_TOKENS_PER_IMAGE = 1024;
+const OLLAMA_REASONING_EFFORT_VALUES = new Set(["none", "low", "medium", "high"]);
 
 export function normalizeOllamaModelId(model: string | null | undefined): string | null {
   if (typeof model !== "string") return null;
@@ -110,6 +120,17 @@ export function makeOllamaTokenUsageSnapshot(input: {
   };
 }
 
+export function resolveOllamaReasoningEffort(
+  modelSelection: Pick<ModelSelection, "options"> | null | undefined,
+): string | null {
+  const value = getProviderOptionStringSelectionValue(
+    modelSelection?.options,
+    OLLAMA_REASONING_EFFORT_OPTION_ID,
+  );
+  if (!value || value === OLLAMA_REASONING_EFFORT_DEFAULT) return null;
+  return OLLAMA_REASONING_EFFORT_VALUES.has(value) ? value : null;
+}
+
 export function formatOllamaOpenCodeFailureDetail(input: {
   readonly detail: string;
   readonly model?: string | null | undefined;
@@ -117,7 +138,13 @@ export function formatOllamaOpenCodeFailureDetail(input: {
   readonly emptyOutput?: boolean | undefined;
 }): string {
   const detail = input.detail.trim() || "The provider did not return an error message.";
-  const modelId = normalizeOllamaModelId(input.model) ?? "the selected model";
+  const normalizedModelId = normalizeOllamaModelId(input.model);
+  const isCloudModel = isOllamaCloudModelId(normalizedModelId ?? input.model);
+  const modelId =
+    getOllamaModelDisplayName(normalizedModelId ?? input.model) ??
+    (normalizedModelId ? stripOllamaCloudModelSuffix(normalizedModelId) : "the selected model");
+  const modelLabel = isCloudModel ? "Ollama Cloud model" : "Ollama model";
+  const modelChoiceLabel = isCloudModel ? "cloud model" : "local model";
   const baseUrl = normalizeOllamaBaseUrl(input.baseUrl);
   const lower = detail.toLowerCase();
 
@@ -140,8 +167,17 @@ export function formatOllamaOpenCodeFailureDetail(input: {
     lower.includes("model") &&
     (lower.includes("not found") || lower.includes("404") || lower.includes("pull model"))
   ) {
+    if (isCloudModel) {
+      return (
+        "Ollama Cloud could not access model '" +
+        modelId +
+        "'. Check Ollama Cloud auth and model availability, then retry. Details: " +
+        detail
+      );
+    }
+
     return (
-      "Ollama could not load model '" +
+      "Ollama could not load local model '" +
       modelId +
       "'. Run 'ollama pull " +
       modelId +
@@ -157,7 +193,8 @@ export function formatOllamaOpenCodeFailureDetail(input: {
     lower.includes("timeouterror")
   ) {
     return (
-      "Ollama model '" +
+      modelLabel +
+      " '" +
       modelId +
       "' did not answer before the request timed out. Try a smaller model or retry after the model finishes loading. Details: " +
       detail
@@ -198,38 +235,53 @@ export function formatOllamaOpenCodeFailureDetail(input: {
     (lower.includes("not support") || lower.includes("unsupported") || lower.includes("invalid"))
   ) {
     return (
-      "Ollama model '" +
+      modelLabel +
+      " '" +
       modelId +
-      "' could not handle the tool-call request. Pick a local model with tool-call support. Details: " +
+      "' could not handle the tool-call request. Pick a " +
+      modelChoiceLabel +
+      " with tool-call support. Details: " +
       detail
     );
   }
 
   if (input.emptyOutput) {
     return (
-      "Ollama model '" +
+      modelLabel +
+      " '" +
       modelId +
-      "' answered with no text. Try again or choose a different local model. Details: " +
+      "' answered with no text. Try again or choose a different " +
+      modelChoiceLabel +
+      ". Details: " +
       detail
     );
   }
 
-  return "Ollama model '" + modelId + "' failed while answering. Details: " + detail;
+  return modelLabel + " '" + modelId + "' failed while answering. Details: " + detail;
 }
 
 export function buildOllamaOpenCodeConfig(input: {
   readonly settings: Pick<OllamaSettings, "baseUrl" | "customModels">;
   readonly modelIds: ReadonlyArray<string>;
+  readonly modelSelection?: ModelSelection | undefined;
 }): string {
   const modelIds =
     input.modelIds.length > 0
       ? input.modelIds
       : ollamaModelIdsForConfig({ settings: input.settings });
+  const reasoningEffort = resolveOllamaReasoningEffort(input.modelSelection);
   const models = Object.fromEntries(
     modelIds.map((modelId) => [
       modelId,
       {
         name: modelId,
+        ...(reasoningEffort
+          ? {
+              options: {
+                reasoningEffort,
+              },
+            }
+          : {}),
       },
     ]),
   );

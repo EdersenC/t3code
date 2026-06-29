@@ -19,6 +19,10 @@ import {
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
 import { cn } from "../../lib/utils";
+import {
+  getModelRuntimeSourceBadgeClassName,
+  getModelRuntimeSourceLabel,
+} from "../../modelRuntimeSourcePresentation";
 import { sortModelsForProviderInstance } from "../../modelOrdering";
 import { MAX_CUSTOM_MODEL_LENGTH } from "../../modelSelection";
 import { Button } from "../ui/button";
@@ -34,6 +38,7 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
   [ProviderDriverKind.make("codex")]: "gpt-6.7-codex-ultra-preview",
   [ProviderDriverKind.make("claudeAgent")]: "claude-sonnet-5-0",
   [ProviderDriverKind.make("cursor")]: "claude-sonnet-4-6",
+  [ProviderDriverKind.make("groq")]: "groq/openai/gpt-oss-120b",
   [ProviderDriverKind.make("opencode")]: "openai/gpt-5",
   [ProviderDriverKind.make("ollama")]: "ollama/llama3.2:3b",
 };
@@ -223,6 +228,9 @@ export function ProviderModelsSection({
             capLabels.push("Reasoning");
           }
           const hasDetails = capLabels.length > 0 || model.name !== model.slug;
+          const runtimeBadgeLabel = model.runtimeSource
+            ? getModelRuntimeSourceLabel(model.runtimeSource)
+            : null;
 
           return (
             <div
@@ -241,6 +249,17 @@ export function ProviderModelsSection({
                 >
                   {model.name}
                 </span>
+                {model.runtimeSource && runtimeBadgeLabel ? (
+                  <span
+                    className={cn(
+                      "shrink-0 rounded border px-1 py-px text-[10px] font-bold uppercase leading-none tracking-wide",
+                      getModelRuntimeSourceBadgeClassName(model.runtimeSource),
+                    )}
+                    aria-label={`${runtimeBadgeLabel} model`}
+                  >
+                    {runtimeBadgeLabel}
+                  </span>
+                ) : null}
                 {hasDetails ? (
                   <Tooltip>
                     <TooltipTrigger

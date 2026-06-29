@@ -71,4 +71,59 @@ describe("ServerProvider", () => {
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
   });
+
+  it("decodes optional model runtime source metadata", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "ollama",
+      driver: "ollama",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [
+        {
+          slug: "ollama/gpt-oss-120b-cloud",
+          name: "gpt-oss-120b",
+          subProvider: "Cloud",
+          runtimeSource: "cloud",
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+    });
+
+    expect(parsed.models[0]?.runtimeSource).toBe("cloud");
+  });
+
+  it("decodes optional model disabled reason", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "ollama",
+      driver: "ollama",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [
+        {
+          slug: "ollama/gpt-oss-120b-cloud",
+          name: "gpt-oss-120b",
+          subProvider: "Cloud",
+          runtimeSource: "cloud",
+          disabledReason: "Ollama Cloud plan does not include this model.",
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+    });
+
+    expect(parsed.models[0]?.disabledReason).toBe("Ollama Cloud plan does not include this model.");
+  });
 });

@@ -2,6 +2,7 @@ import {
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
+  type ServerProviderModelRuntimeSource,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -34,6 +35,7 @@ type ModelPickerItem = {
   name: string;
   shortName?: string;
   subProvider?: string;
+  runtimeSource?: ServerProviderModelRuntimeSource;
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
   instanceDisplayName: string;
@@ -207,6 +209,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           name: model.name,
           ...(model.shortName ? { shortName: model.shortName } : {}),
           ...(model.subProvider ? { subProvider: model.subProvider } : {}),
+          ...(model.runtimeSource ? { runtimeSource: model.runtimeSource } : {}),
           instanceId,
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
@@ -270,6 +273,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               name: model.name,
               ...(model.shortName ? { shortName: model.shortName } : {}),
               ...(model.subProvider ? { subProvider: model.subProvider } : {}),
+              ...(model.runtimeSource ? { runtimeSource: model.runtimeSource } : {}),
               driverKind: model.driverKind,
               providerDisplayName: model.instanceDisplayName,
               isFavorite: favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
@@ -281,6 +285,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             name: model.name,
             ...(model.shortName ? { shortName: model.shortName } : {}),
             ...(model.subProvider ? { subProvider: model.subProvider } : {}),
+            ...(model.runtimeSource ? { runtimeSource: model.runtimeSource } : {}),
             driverKind: model.driverKind,
             providerDisplayName: model.instanceDisplayName,
           }),

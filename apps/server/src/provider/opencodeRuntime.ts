@@ -32,13 +32,15 @@ import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveSpawnCommand, type ResolvedSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
 const OPENCODE_SERVER_READY_PREFIX = "opencode server listening";
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 5_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
+const DEFAULT_OPENCODE_BINARY_PATH = "opencode";
+const OPENCODE_NPX_PACKAGE = "opencode-ai";
 export interface OpenCodeServerProcess {
   readonly url: string;
   readonly exitCode: Effect.Effect<number, never>;
@@ -277,20 +279,48 @@ function ensureRuntimeError(
     : new OpenCodeRuntimeError({ operation, detail, cause });
 }
 
+function isDefaultOpenCodeBinary(command: string): boolean {
+  return command.trim() === DEFAULT_OPENCODE_BINARY_PATH;
+}
+
 const makeOpenCodeRuntime = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const netService = yield* NetService.NetService;
   const hostPlatform = yield* HostProcessPlatform;
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
     resolveSpawnCommand(command, args, env ? { env } : {});
+  const resolveNpxOpenCodeCommand = (args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
+    resolveSpawnCommand("npx", ["-y", OPENCODE_NPX_PACKAGE, ...args], env ? { env } : {});
 
   const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
     Effect.gen(function* () {
       const spawnCommand = yield* resolveCommand(input.binaryPath, input.args, input.environment);
-      const child = yield* spawner.spawn(
-        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-          shell: spawnCommand.shell,
-          ...(input.environment ? { env: input.environment } : { extendEnv: true }),
+      const spawnChild = (command: ResolvedSpawnCommand) =>
+        spawner.spawn(
+          ChildProcess.make(command.command, command.args, {
+            shell: command.shell,
+            ...(input.environment ? { env: input.environment } : { extendEnv: true }),
+          }),
+        );
+      const child = yield* spawnChild(spawnCommand).pipe(
+        Effect.catch((cause) => {
+          if (!isDefaultOpenCodeBinary(input.binaryPath)) {
+            return Effect.fail(cause);
+          }
+
+          const detail = openCodeRuntimeErrorDetail(cause).toLowerCase();
+          const missingBinary =
+            detail.includes("enoent") ||
+            detail.includes("not found") ||
+            detail.includes("notfound");
+          if (!missingBinary) {
+            return Effect.fail(cause);
+          }
+
+          return Effect.gen(function* () {
+            const fallbackCommand = yield* resolveNpxOpenCodeCommand(input.args, input.environment);
+            return yield* spawnChild(fallbackCommand);
+          });
         }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
@@ -345,29 +375,39 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const configContent = input.configContent ?? OPENCODE_EMPTY_CONFIG_CONTENT;
       const spawnCommand = yield* resolveCommand(input.binaryPath, args, input.environment);
 
-      const child = yield* spawner
-        .spawn(
-          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      const spawnChild = (command: ResolvedSpawnCommand) =>
+        spawner.spawn(
+          ChildProcess.make(command.command, command.args, {
             detached: hostPlatform !== "win32",
-            shell: spawnCommand.shell,
+            shell: command.shell,
             env: {
               ...input.environment,
               OPENCODE_CONFIG_CONTENT: configContent,
             },
             extendEnv: input.environment === undefined,
           }),
-        )
-        .pipe(
-          Effect.provideService(Scope.Scope, runtimeScope),
-          Effect.mapError(
-            (cause) =>
-              new OpenCodeRuntimeError({
-                operation: "startOpenCodeServerProcess",
-                detail: `Failed to spawn OpenCode server process: ${openCodeRuntimeErrorDetail(cause)}`,
-                cause,
-              }),
-          ),
         );
+
+      const child = yield* spawnChild(spawnCommand).pipe(
+        Effect.catch((cause) => {
+          if (!isDefaultOpenCodeBinary(input.binaryPath)) {
+            return Effect.fail(cause);
+          }
+          return Effect.gen(function* () {
+            const fallbackCommand = yield* resolveNpxOpenCodeCommand(args, input.environment);
+            return yield* spawnChild(fallbackCommand);
+          });
+        }),
+        Effect.provideService(Scope.Scope, runtimeScope),
+        Effect.mapError(
+          (cause) =>
+            new OpenCodeRuntimeError({
+              operation: "startOpenCodeServerProcess",
+              detail: `Failed to spawn OpenCode server process: ${openCodeRuntimeErrorDetail(cause)}`,
+              cause,
+            }),
+        ),
+      );
 
       const killOpenCodeProcessGroup = (signal: NodeJS.Signals) =>
         hostPlatform === "win32"
@@ -464,9 +504,17 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const readyOption = readyExit.value;
       if (Option.isNone(readyOption)) {
         yield* Fiber.interrupt(exitFiber).pipe(Effect.ignore);
+        const stdout = yield* Ref.get(stdoutRef);
+        const stderr = yield* Ref.get(stderrRef);
         return yield* new OpenCodeRuntimeError({
           operation: "startOpenCodeServerProcess",
-          detail: `Timed out waiting for OpenCode server start after ${timeoutMs}ms.`,
+          detail: [
+            `Timed out waiting for OpenCode server start after ${timeoutMs}ms.`,
+            stdout.trim() ? `stdout:\n${stdout.trim()}` : null,
+            stderr.trim() ? `stderr:\n${stderr.trim()}` : null,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
         });
       }
 

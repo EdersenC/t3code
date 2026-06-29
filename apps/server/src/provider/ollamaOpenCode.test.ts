@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-import { DEFAULT_OLLAMA_MODEL } from "@t3tools/contracts";
+import { DEFAULT_OLLAMA_MODEL, ProviderInstanceId } from "@t3tools/contracts";
 
 import { normalizeOllamaBaseUrl } from "./ollamaApi.ts";
 import {
@@ -11,7 +11,10 @@ import {
   makeOllamaTokenUsageSnapshot,
   normalizeOllamaModelId,
   normalizeOllamaOpenAiCompatibleBaseUrl,
+  OLLAMA_REASONING_EFFORT_DEFAULT,
+  OLLAMA_REASONING_EFFORT_OPTION_ID,
   ollamaModelIdsFromCandidates,
+  resolveOllamaReasoningEffort,
   toOllamaOpenCodeModelSlug,
 } from "./ollamaOpenCode.ts";
 
@@ -23,7 +26,15 @@ type OllamaOpenCodeConfig = {
     readonly ollama: {
       readonly npm: string;
       readonly options: { readonly baseURL: string };
-      readonly models: Record<string, unknown>;
+      readonly models: Record<
+        string,
+        {
+          readonly name?: string;
+          readonly options?: {
+            readonly reasoningEffort?: string;
+          };
+        }
+      >;
     };
   };
 };
@@ -60,6 +71,43 @@ describe("Ollama OpenCode config helpers", () => {
     expect(config.provider.ollama.options.baseURL).toBe("http://localhost:11434/v1");
     expect(Object.keys(config.provider.ollama.models)).toEqual(["qwen2.5-coder:7b", "llama3.2:3b"]);
   });
+
+  it("adds selected Ollama reasoning effort to generated model options", () => {
+    const config = decodeJson(
+      buildOllamaOpenCodeConfig({
+        settings: {
+          baseUrl: "http://localhost:11434/v1",
+          customModels: [DEFAULT_OLLAMA_MODEL],
+        },
+        modelIds: ["qwen3:8b"],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("ollama"),
+          model: "ollama/qwen3:8b",
+          options: [{ id: OLLAMA_REASONING_EFFORT_OPTION_ID, value: "high" }],
+        },
+      }),
+    ) as OllamaOpenCodeConfig;
+
+    expect(config.provider.ollama.models["qwen3:8b"]?.options).toEqual({
+      reasoningEffort: "high",
+    });
+  });
+
+  it("omits default or unknown Ollama reasoning effort overrides", () => {
+    expect(
+      resolveOllamaReasoningEffort({
+        options: [
+          { id: OLLAMA_REASONING_EFFORT_OPTION_ID, value: OLLAMA_REASONING_EFFORT_DEFAULT },
+        ],
+      }),
+    ).toBeNull();
+    expect(
+      resolveOllamaReasoningEffort({
+        options: [{ id: OLLAMA_REASONING_EFFORT_OPTION_ID, value: "max" }],
+      }),
+    ).toBeNull();
+  });
+
   it("detects Ollama GPU residency from running model metadata", () => {
     expect(
       isOllamaRunningModelGpuResident({
@@ -126,5 +174,12 @@ describe("Ollama OpenCode config helpers", () => {
         detail: "no available gpu memory",
       }),
     ).toContain("accept CPU fallback");
+
+    expect(
+      formatOllamaOpenCodeFailureDetail({
+        model: "ollama/gpt-oss-120b-cloud",
+        detail: "model gpt-oss-120b-cloud not found",
+      }),
+    ).toContain("Ollama Cloud could not access model 'gpt-oss-120b'");
   });
 });

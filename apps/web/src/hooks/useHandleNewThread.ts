@@ -47,6 +47,7 @@ export function useNewThreadHandler() {
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
+        forceNewDraft?: boolean;
       },
     ): Promise<void> => {
       const {
@@ -72,6 +73,7 @@ export function useNewThreadHandler() {
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
       const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+      const forceNewDraft = options?.forceNewDraft === true;
       const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -88,7 +90,7 @@ export function useNewThreadHandler() {
           ? getDraftThread(currentRouteTarget.threadRef)
           : getDraftSession(currentRouteTarget.draftId)
         : null;
-      if (reusableStoredDraftThread) {
+      if (!forceNewDraft && reusableStoredDraftThread) {
         return (async () => {
           if (
             hasBranchOption ||
@@ -125,6 +127,7 @@ export function useNewThreadHandler() {
       }
 
       if (
+        !forceNewDraft &&
         latestActiveDraftThread &&
         currentRouteTarget?.kind === "draft" &&
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&

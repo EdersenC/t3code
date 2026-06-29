@@ -8,15 +8,23 @@ import {
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
+  type ServerProviderModelRuntimeSource,
 } from "@t3tools/contracts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 const OLLAMA_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("ollama");
 const OLLAMA_MODEL_SLUG_PREFIX = "ollama/";
+export const OLLAMA_CLOUD_MODEL_SUFFIX = ":cloud";
+export const OLLAMA_CLOUD_MODEL_DASH_SUFFIX = "-cloud";
+const OLLAMA_CLOUD_MODEL_SUFFIXES = [
+  OLLAMA_CLOUD_MODEL_SUFFIX,
+  OLLAMA_CLOUD_MODEL_DASH_SUFFIX,
+] as const;
 
 export interface SelectableModelOption {
   slug: string;
   name: string;
+  runtimeSource?: ServerProviderModelRuntimeSource | undefined;
 }
 
 export function createModelCapabilities(input: {
@@ -261,6 +269,42 @@ export function normalizeModelSlug(
   }
 
   return normalized;
+}
+
+function removeOllamaSlugPrefix(model: string): string {
+  return model.startsWith(OLLAMA_MODEL_SLUG_PREFIX)
+    ? model.slice(OLLAMA_MODEL_SLUG_PREFIX.length)
+    : model;
+}
+
+export function isOllamaCloudModelId(model: string | null | undefined): boolean {
+  if (typeof model !== "string") return false;
+  const trimmed = removeOllamaSlugPrefix(model.trim()).toLowerCase();
+  return OLLAMA_CLOUD_MODEL_SUFFIXES.some((suffix) => trimmed.endsWith(suffix));
+}
+
+export function stripOllamaCloudModelSuffix(model: string): string {
+  const trimmed = model.trim();
+  const lower = trimmed.toLowerCase();
+  for (const suffix of OLLAMA_CLOUD_MODEL_SUFFIXES) {
+    if (lower.endsWith(suffix)) {
+      return trimmed.slice(0, -suffix.length).trim();
+    }
+  }
+  return trimmed;
+}
+
+export function getOllamaModelDisplayName(model: string | null | undefined): string | null {
+  const trimmed = trimOrNull(model);
+  if (!trimmed) return null;
+  const withoutPrefix = removeOllamaSlugPrefix(trimmed).trim();
+  return stripOllamaCloudModelSuffix(withoutPrefix) || withoutPrefix;
+}
+
+export function getOllamaModelRuntimeSource(
+  model: string | null | undefined,
+): ServerProviderModelRuntimeSource {
+  return isOllamaCloudModelId(model) ? "cloud" : "local";
 }
 
 export function resolveSelectableModel(

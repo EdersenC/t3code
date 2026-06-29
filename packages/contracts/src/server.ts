@@ -58,11 +58,16 @@ export const ServerProviderAuth = Schema.Struct({
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
+export const ServerProviderModelRuntimeSource = Schema.Literals(["local", "cloud"]);
+export type ServerProviderModelRuntimeSource = typeof ServerProviderModelRuntimeSource.Type;
+
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
   shortName: Schema.optional(TrimmedNonEmptyString),
   subProvider: Schema.optional(TrimmedNonEmptyString),
+  runtimeSource: Schema.optional(ServerProviderModelRuntimeSource),
+  disabledReason: Schema.optional(TrimmedNonEmptyString),
   isCustom: Schema.Boolean,
   capabilities: Schema.NullOr(ModelCapabilities),
 });

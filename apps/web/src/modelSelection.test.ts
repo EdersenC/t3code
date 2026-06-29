@@ -122,6 +122,36 @@ describe("instance-scoped model selection", () => {
     );
   });
 
+  it("presents Ollama cloud custom models without hiding the routing slug", () => {
+    const providers = [
+      provider({ provider: ProviderDriverKind.make("ollama"), instanceId: "ollama" }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("ollama")]: {
+          driver: ProviderDriverKind.make("ollama"),
+          config: { customModels: ["gpt-oss-120b-cloud"] },
+        },
+      },
+    };
+    const ollama = deriveProviderInstanceEntries(providers).find(
+      (entry) => entry.instanceId === "ollama",
+    )!;
+
+    const option = getAppModelOptionsForInstance(settings, ollama).find(
+      (candidate) => candidate.slug === "ollama/gpt-oss-120b-cloud",
+    );
+    expect(option).toMatchObject({
+      slug: "ollama/gpt-oss-120b-cloud",
+      name: "gpt-oss-120b",
+      subProvider: "Cloud",
+      runtimeSource: "cloud",
+      isCustom: true,
+    });
+  });
+
   it("does not inject an unknown selected slug into the stock instance list", () => {
     const providers = [
       provider({

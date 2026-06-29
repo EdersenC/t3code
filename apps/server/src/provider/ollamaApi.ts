@@ -2,6 +2,7 @@ import type { OllamaSettings } from "@t3tools/contracts";
 
 export const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+const OLLAMA_CLOUD_PROBE_TIMEOUT_MS = 3_000;
 
 export type OllamaFetch = typeof fetch;
 
@@ -51,6 +52,12 @@ export interface OllamaModelMetadata {
   readonly contextWindow: number | null;
 }
 
+export interface OllamaCloudModelAvailabilityResult {
+  readonly available: boolean;
+  readonly reason: string | null;
+  readonly status: number | null;
+}
+
 export class OllamaApiError extends Error {
   readonly operation: string;
   readonly status: number | undefined;
@@ -73,6 +80,54 @@ export class OllamaApiError extends Error {
 interface OllamaRequestOptions {
   readonly fetchFn?: OllamaFetch | undefined;
   readonly timeoutMs?: number | undefined;
+}
+
+function classifyOllamaCloudModelAccessFailure(input: {
+  readonly detail?: string | undefined;
+  readonly status: number | undefined;
+}): string | null {
+  const detail = typeof input.detail === "string" ? input.detail.trim().toLowerCase() : "";
+
+  if (input.status === 401 || input.status === 403 || input.status === 402) {
+    return "access denied by Ollama Cloud plan or authentication.";
+  }
+
+  if (
+    input.status === 404 &&
+    (detail.includes("not found") ||
+      detail.includes("no model") ||
+      detail.includes("model is not available"))
+  ) {
+    return "model is unavailable under the current Ollama Cloud configuration or plan.";
+  }
+
+  const containsAccessRestriction =
+    detail.includes("permission") ||
+    detail.includes("forbidden") ||
+    detail.includes("unauthorized") ||
+    detail.includes("not authorized") ||
+    detail.includes("upgrade") ||
+    detail.includes("subscription") ||
+    detail.includes("plan") ||
+    detail.includes("quota") ||
+    detail.includes("insufficient") ||
+    detail.includes("entitlement") ||
+    (detail.includes("cloud") && detail.includes("unavailable"));
+
+  if (
+    input.status !== undefined &&
+    input.status >= 400 &&
+    input.status < 500 &&
+    containsAccessRestriction
+  ) {
+    return "model is unavailable under the current Ollama Cloud configuration or plan.";
+  }
+
+  if (input.status === 429) {
+    return "Ollama Cloud is currently rate limiting probe requests; model availability is temporarily unknown.";
+  }
+
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -296,6 +351,58 @@ export async function getOllamaModelMetadata(
     : null;
 
   return { model, contextWindow };
+}
+
+export async function checkOllamaCloudModelAccessibility(
+  settings: Pick<OllamaSettings, "baseUrl">,
+  input: { readonly model: string },
+  options?: OllamaRequestOptions,
+): Promise<OllamaCloudModelAvailabilityResult> {
+  const normalizedModel = input.model.trim();
+  if (!normalizedModel) {
+    return {
+      available: true,
+      reason: null,
+      status: null,
+    };
+  }
+
+  try {
+    await requestOllamaJson({
+      settings,
+      operation: "POST /v1/chat/completions",
+      path: "/v1/chat/completions",
+      method: "POST",
+      body: {
+        model: normalizedModel,
+        stream: false,
+        messages: [{ role: "user", content: "." }],
+        max_tokens: 1,
+      },
+      options: {
+        ...options,
+        timeoutMs: Math.min(
+          options?.timeoutMs ?? OLLAMA_CLOUD_PROBE_TIMEOUT_MS,
+          OLLAMA_CLOUD_PROBE_TIMEOUT_MS,
+        ),
+      },
+    });
+
+    return { available: true, reason: null, status: null };
+  } catch (cause) {
+    if (!(cause instanceof OllamaApiError)) {
+      return { available: false, reason: null, status: null };
+    }
+
+    return {
+      available: false,
+      reason: classifyOllamaCloudModelAccessFailure({
+        detail: cause.message,
+        status: cause.status,
+      }),
+      status: cause.status ?? null,
+    };
+  }
 }
 
 export async function chatOllama(

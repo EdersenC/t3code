@@ -211,6 +211,25 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const GroqIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("text-[#f55036] dark:text-[#ff7a66]", className)}
+  >
+    <path
+      d="M12 2.4c5.3 0 9.6 4.3 9.6 9.6s-4.3 9.6-9.6 9.6S2.4 17.3 2.4 12 6.7 2.4 12 2.4Z"
+      stroke="currentColor"
+      strokeWidth="2"
+    />
+    <path
+      d="M7.35 12.35c0-2.35 1.8-4.1 4.35-4.1h4.95v7.5h-4.9c-2.6 0-4.4-1.55-4.4-3.4Zm4.55-1.95c-1.2 0-2 .72-2 1.88 0 1.02.82 1.62 2.05 1.62h2.15v-3.5h-2.2Z"
+      fill="currentColor"
+    />
+  </svg>
+);
+
 export const OllamaIcon: Icon = ({ className, ...props }) => {
   const maskId = `${useId().replaceAll(":", "")}-ollama`;
 

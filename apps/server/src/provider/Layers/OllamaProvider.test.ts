@@ -173,6 +173,80 @@ function makeOllamaFetch(
   return fetchFn as typeof fetch;
 }
 
+function makeOllamaFetchWithCloudProbe(input: {
+  readonly models: ReadonlyArray<string>;
+  readonly runningModels?: ReadonlyArray<Record<string, unknown>>;
+  readonly cloudProbeStatusByModel?: Partial<Record<string, number>>;
+}): {
+  readonly fetchFn: typeof fetch;
+  readonly probeCallCount: () => number;
+} {
+  const { models, runningModels = [], cloudProbeStatusByModel = {} } = input;
+  let probeCalls = 0;
+
+  const fetchFn = async (
+    requestInput: Parameters<typeof fetch>[0],
+    init: Parameters<typeof fetch>[1],
+  ) => {
+    const rawUrl =
+      typeof requestInput === "string"
+        ? requestInput
+        : requestInput instanceof URL
+          ? requestInput.href
+          : requestInput.url;
+    const url = new URL(rawUrl);
+    if (url.pathname === "/api/version") {
+      return new Response(JSON.stringify({ version: "0.13.0" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.pathname === "/api/tags") {
+      return new Response(
+        JSON.stringify({
+          models: models.map((name) => ({ name })),
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.pathname === "/api/ps") {
+      return new Response(JSON.stringify({ models: runningModels }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.pathname === "/v1/chat/completions") {
+      probeCalls++;
+      const body = typeof init?.body === "string" ? init.body : "";
+      let model = "";
+      try {
+        const payload = JSON.parse(body);
+        if (typeof payload?.model === "string") {
+          model = payload.model;
+        }
+      } catch {
+        // Ignore malformed probe request payloads.
+      }
+
+      const status = cloudProbeStatusByModel[model] ?? 200;
+      const responseBody =
+        status === 200
+          ? JSON.stringify({ object: "chat.completion" })
+          : JSON.stringify({ error: "not available" });
+      return new Response(responseBody, {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  return {
+    fetchFn: fetchFn as typeof fetch,
+    probeCallCount: () => probeCalls,
+  };
+}
+
 it.layer(testLayer)("checkOllamaProviderStatus", (it) => {
   it.effect("generates an OpenCode Ollama config and exposes local models", () =>
     Effect.gen(function* () {
@@ -218,6 +292,184 @@ it.layer(testLayer)("checkOllamaProviderStatus", (it) => {
         "qwen2.5-coder:7b",
         "llama3.2:3b",
       ]);
+    }),
+  );
+
+  it.effect("labels configured Ollama Cloud models without exposing the cloud suffix", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["ollama"],
+          all: [
+            {
+              id: "ollama",
+              name: "Ollama (local)",
+              models: {
+                "gpt-oss-120b-cloud": {
+                  id: "gpt-oss-120b-cloud",
+                  name: "gpt-oss-120b-cloud",
+                  variants: {},
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkOllamaProviderStatus(
+        makeOllamaSettings({ customModels: ["ollama/gpt-oss-120b-cloud"] }),
+        process.cwd(),
+        process.env,
+        { fetchFn: makeOllamaFetch([]) },
+      );
+
+      const cloudModel = snapshot.models.find(
+        (model) => model.slug === "ollama/gpt-oss-120b-cloud",
+      );
+      NodeAssert.equal(snapshot.status, "ready");
+      NodeAssert.equal(cloudModel?.name, "gpt-oss-120b");
+      NodeAssert.equal(cloudModel?.subProvider, "Cloud");
+      NodeAssert.equal(cloudModel?.runtimeSource, "cloud");
+      NodeAssert.match(snapshot.message ?? "", /cloud model/);
+
+      const config = decodeJson(runtimeMock.state.configContents[0]!) as OllamaOpenCodeConfig;
+      NodeAssert.ok(Object.hasOwn(config.provider.ollama.models, "gpt-oss-120b-cloud"));
+    }),
+  );
+
+  it.effect("marks unavailable Ollama Cloud models when chat probe rejects them", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["ollama"],
+          all: [
+            {
+              id: "ollama",
+              name: "Ollama (local)",
+              models: {
+                "gpt-oss-120b-cloud": {
+                  id: "gpt-oss-120b-cloud",
+                  name: "gpt-oss-120b-cloud",
+                  variants: {},
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const { fetchFn } = makeOllamaFetchWithCloudProbe({
+        models: [],
+        cloudProbeStatusByModel: {
+          "gpt-oss-120b-cloud": 403,
+        },
+      });
+
+      const snapshot = yield* checkOllamaProviderStatus(
+        makeOllamaSettings({
+          baseUrl: "http://127.0.0.1:11436",
+          customModels: ["ollama/gpt-oss-120b-cloud"],
+        }),
+        process.cwd(),
+        process.env,
+        { fetchFn },
+      );
+
+      const cloudModel = snapshot.models.find(
+        (model) => model.slug === "ollama/gpt-oss-120b-cloud",
+      );
+      NodeAssert.equal(snapshot.status, "ready");
+      NodeAssert.equal(
+        cloudModel?.disabledReason,
+        "access denied by Ollama Cloud plan or authentication.",
+      );
+    }),
+  );
+
+  it.effect("probes only a bounded number of unavailable cloud models per refresh", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["ollama"],
+          all: [
+            {
+              id: "ollama",
+              name: "Ollama (local)",
+              models: {
+                "gpt-oss-120b-cloud": {
+                  id: "gpt-oss-120b-cloud",
+                  name: "gpt-oss-120b-cloud",
+                  variants: {},
+                },
+                "gpt-oss-70b-cloud": {
+                  id: "gpt-oss-70b-cloud",
+                  name: "gpt-oss-70b-cloud",
+                  variants: {},
+                },
+                "gpt-oss-30b-cloud": {
+                  id: "gpt-oss-30b-cloud",
+                  name: "gpt-oss-30b-cloud",
+                  variants: {},
+                },
+                "gpt-oss-20b-cloud": {
+                  id: "gpt-oss-20b-cloud",
+                  name: "gpt-oss-20b-cloud",
+                  variants: {},
+                },
+                "gpt-oss-14b-cloud": {
+                  id: "gpt-oss-14b-cloud",
+                  name: "gpt-oss-14b-cloud",
+                  variants: {},
+                },
+                "gpt-oss-8b-cloud": {
+                  id: "gpt-oss-8b-cloud",
+                  name: "gpt-oss-8b-cloud",
+                  variants: {},
+                },
+              },
+            },
+          ],
+        },
+        default: {},
+        agents: [],
+      };
+
+      const probe = makeOllamaFetchWithCloudProbe({
+        models: [],
+        cloudProbeStatusByModel: {
+          "gpt-oss-120b-cloud": 403,
+          "gpt-oss-70b-cloud": 403,
+          "gpt-oss-30b-cloud": 403,
+          "gpt-oss-20b-cloud": 403,
+          "gpt-oss-14b-cloud": 403,
+          "gpt-oss-8b-cloud": 403,
+        },
+      });
+
+      const snapshot = yield* checkOllamaProviderStatus(
+        makeOllamaSettings({
+          baseUrl: "http://127.0.0.1:11435",
+          customModels: [
+            "ollama/gpt-oss-120b-cloud",
+            "ollama/gpt-oss-70b-cloud",
+            "ollama/gpt-oss-30b-cloud",
+            "ollama/gpt-oss-20b-cloud",
+            "ollama/gpt-oss-14b-cloud",
+            "ollama/gpt-oss-8b-cloud",
+          ],
+        }),
+        process.cwd(),
+        process.env,
+        { fetchFn: probe.fetchFn },
+      );
+
+      NodeAssert.equal(snapshot.status, "ready");
+      NodeAssert.ok(probe.probeCallCount() <= 4);
+      NodeAssert.equal(snapshot.models.filter((model) => model.disabledReason).length, 4);
     }),
   );
 

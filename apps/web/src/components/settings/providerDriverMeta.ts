@@ -3,6 +3,7 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  GroqSettings,
   OllamaSettings,
   OpenCodeSettings,
   ProviderDriverKind,
@@ -12,6 +13,7 @@ import {
   ClaudeAI,
   CursorIcon,
   GrokIcon,
+  GroqIcon,
   type Icon,
   OllamaIcon,
   OpenAI,
@@ -69,6 +71,12 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     icon: GrokIcon,
     badgeLabel: "Early Access",
     settingsSchema: GrokSettings,
+  },
+  {
+    value: ProviderDriverKind.make("groq"),
+    label: "Groq",
+    icon: GroqIcon,
+    settingsSchema: GroqSettings,
   },
   {
     value: ProviderDriverKind.make("opencode"),
