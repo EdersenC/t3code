@@ -6,22 +6,39 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
 source "$REPO_ROOT/scripts/local-ai-env.sh"
 
-MODEL="${VLLM_SMOKE_MODEL:-Qwen/Qwen2.5-Coder-0.5B-Instruct}"
-PORT="${VLLM_SMOKE_PORT:-8018}"
-MAX_MODEL_LEN="${VLLM_SMOKE_MAX_MODEL_LEN:-2048}"
-GPU_MEMORY_UTILIZATION="${VLLM_SMOKE_GPU_MEMORY_UTILIZATION:-0.75}"
-TIMEOUT_SECONDS="${VLLM_SMOKE_TIMEOUT_SECONDS:-180}"
-LOG="${VLLM_SMOKE_LOG:-$VLLM_CACHE_ROOT/smoke.log}"
+MODEL="${T3CODE_VLLM_SMOKE_MODEL:-${VLLM_SMOKE_MODEL:-Qwen/Qwen2.5-Coder-0.5B-Instruct}}"
+PORT="${T3CODE_VLLM_SMOKE_PORT:-${VLLM_SMOKE_PORT:-8018}}"
+MAX_MODEL_LEN="${T3CODE_VLLM_SMOKE_MAX_MODEL_LEN:-${VLLM_SMOKE_MAX_MODEL_LEN:-1024}}"
+GPU_MEMORY_UTILIZATION="${T3CODE_VLLM_SMOKE_GPU_MEMORY_UTILIZATION:-${VLLM_SMOKE_GPU_MEMORY_UTILIZATION:-0.60}}"
+TIMEOUT_SECONDS="${T3CODE_VLLM_SMOKE_TIMEOUT_SECONDS:-${VLLM_SMOKE_TIMEOUT_SECONDS:-180}}"
+LOG="${T3CODE_VLLM_SMOKE_LOG:-${VLLM_SMOKE_LOG:-$VLLM_CACHE_ROOT/smoke.log}}"
+EXTRA_ARGS="--enforce-eager"
+if [[ -v VLLM_SMOKE_EXTRA_ARGS ]]; then
+  EXTRA_ARGS="$VLLM_SMOKE_EXTRA_ARGS"
+fi
+if [[ -v T3CODE_VLLM_SMOKE_EXTRA_ARGS ]]; then
+  EXTRA_ARGS="$T3CODE_VLLM_SMOKE_EXTRA_ARGS"
+fi
+export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 
 rm -f "$LOG"
 
-setsid "$VLLM_CACHE_ROOT/venv/bin/python" -m vllm.entrypoints.openai.api_server \
+read -r -a EXTRA_ARGV <<<"$EXTRA_ARGS"
+
+if [[ ! -x "$T3CODE_VLLM_VENV_PATH/bin/python" ]]; then
+  echo "vLLM Python runtime not found at $T3CODE_VLLM_VENV_PATH/bin/python." >&2
+  echo "Run: source scripts/local-ai-env.sh && uv venv \"\$T3CODE_VLLM_VENV_PATH\" --python 3.12 && uv pip install --python \"\$T3CODE_VLLM_VENV_PATH/bin/python\" vllm" >&2
+  exit 127
+fi
+
+setsid "$T3CODE_VLLM_VENV_PATH/bin/python" -m vllm.entrypoints.openai.api_server \
   --model "$MODEL" \
   --host 127.0.0.1 \
   --port "$PORT" \
   --dtype auto \
   --max-model-len "$MAX_MODEL_LEN" \
   --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
+  "${EXTRA_ARGV[@]}" \
   >"$LOG" 2>&1 &
 SERVER_PID=$!
 
