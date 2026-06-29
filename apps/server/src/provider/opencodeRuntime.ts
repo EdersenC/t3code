@@ -307,6 +307,16 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           if (!isDefaultOpenCodeBinary(input.binaryPath)) {
             return Effect.fail(cause);
           }
+
+          const detail = openCodeRuntimeErrorDetail(cause).toLowerCase();
+          const missingBinary =
+            detail.includes("enoent") ||
+            detail.includes("not found") ||
+            detail.includes("notfound");
+          if (!missingBinary) {
+            return Effect.fail(cause);
+          }
+
           return Effect.gen(function* () {
             const fallbackCommand = yield* resolveNpxOpenCodeCommand(input.args, input.environment);
             return yield* spawnChild(fallbackCommand);
