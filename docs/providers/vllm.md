@@ -12,10 +12,12 @@ Source the repo helper before installing or running vLLM:
 source scripts/local-ai-env.sh
 ```
 
-The helper keeps large model and compiler caches on the S: drive:
+The helper keeps large model and compiler caches on the S: drive when `/mnt/s` is available and
+writable. On machines without that mount, it falls back to
+`${XDG_CACHE_HOME:-$HOME/.cache}/t3code/ai`:
 
 ```bash
-AI_CACHE=/mnt/s/ai-cache
+AI_CACHE=/mnt/s/ai-cache # or ${XDG_CACHE_HOME:-$HOME/.cache}/t3code/ai
 HF_HOME=$AI_CACHE/huggingface
 HF_HUB_CACHE=$HF_HOME/hub
 HF_DATASETS_CACHE=$HF_HOME/datasets
@@ -27,7 +29,7 @@ TRITON_CACHE_DIR=$AI_CACHE/triton
 T3CODE_AI_RUNTIME_DIR=/tmp/t3code-ai-$USER
 TMPDIR=$T3CODE_AI_RUNTIME_DIR/tmp
 UV_LINK_MODE=copy
-CUDA_HOME=$T3CODE_VLLM_VENV_PATH/lib/python3.12/site-packages/nvidia/cu13
+CUDA_HOME=<auto-discovered bundled CUDA toolkit when present>
 ```
 
 Keep model/cache storage configurable, but keep runtime sockets and temporary IPC files on a Linux
@@ -38,9 +40,10 @@ Keep the Python virtualenv on WSL ext4 by default. Model artifacts and Hugging F
 on the S: drive, but importing and starting vLLM from a venv on `/mnt/s` was slow and could become
 sticky during process cleanup.
 
-If the vLLM wheel installs NVIDIA CUDA packages, the helper exposes the bundled `nvcc` by setting
-`CUDA_HOME`, `CUDA_PATH`, `PATH`, and `LD_LIBRARY_PATH`. This matters because FlashInfer can JIT
-sampling kernels during vLLM startup and fails if `nvcc` is not discoverable.
+If the vLLM wheel installs NVIDIA CUDA packages, the helper scans the venv for a bundled CUDA
+toolkit and exposes its `nvcc` by setting `CUDA_HOME`, `CUDA_PATH`, `PATH`, and `LD_LIBRARY_PATH`.
+This matters because FlashInfer can JIT sampling kernels during vLLM startup and fails if `nvcc` is
+not discoverable.
 
 The helper also puts the vLLM venv's `bin` directory on `PATH` so JIT helpers can execute the
 venv-provided `ninja`.
@@ -79,8 +82,18 @@ T3CODE_VLLM_SMOKE_EXTRA_ARGS=--enforce-eager
 VLLM_USE_FLASHINFER_SAMPLER=0
 ```
 
+Use the `T3CODE_VLLM_SMOKE_*` namespace for smoke configuration. Do not add new `VLLM_SMOKE_*`
+variables; the local-model tooling should keep one T3-owned namespace as it grows into managed
+runtime instances.
+
 Use a shorter timeout while iterating. If a model is still downloading or compiling, rerun the script
 after confirming the log is making progress instead of waiting blindly.
+
+Pass extra vLLM `api_server` flags after `--` when you need quoting or spaces preserved:
+
+```bash
+scripts/local-vllm-smoke.sh -- --enforce-eager --served-model-name "local qwen smoke"
+```
 
 `VLLM_USE_FLASHINFER_SAMPLER=0` is the current smoke default because FlashInfer's sampler JIT hit a
 CUDA compiler/header mismatch on the RTX 5070 WSL setup. The default is meant to prove the
@@ -125,8 +138,13 @@ Observed on WSL with an RTX 5070:
 
 ## Provider Direction
 
-The T3 provider should be named `Local` unless product direction changes. The first implementation
-can use OpenCode's OpenAI-compatible provider config against `http://127.0.0.1:8000/v1`.
+Use `Local` as the product boundary for the owned-model hub unless product direction changes. Treat
+`vLLM` as one concrete runtime inside that hub, not as an alias for OpenCode or as a provider driver
+name by itself.
+
+The first implementation can use OpenCode's OpenAI-compatible provider config against a managed
+vLLM `/v1` endpoint. The endpoint must come from the persisted local-model runtime instance, not
+from a hard-coded app default. The smoke script's port is only a probe default.
 
 Model source tags should be separate from runtime tags:
 
