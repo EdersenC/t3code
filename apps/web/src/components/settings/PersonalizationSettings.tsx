@@ -1,5 +1,6 @@
 import {
   CheckIcon,
+  MessageSquareIcon,
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
@@ -14,11 +15,14 @@ import type {
   InterfaceContrast,
   InterfaceDensity,
   UiAccentColor,
+  AgentActivityCopyStyle,
   UiCodeFontSize,
   UiFontFamily,
   UiFontSize,
   UiMonoFontFamily,
   UiSecondaryColor,
+  ChatStartComposerPlacement,
+  ChatSurfaceStyle,
 } from "@t3tools/contracts/settings";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
@@ -27,6 +31,9 @@ import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSet
 import { cn } from "../../lib/utils";
 import {
   BACKGROUND_TEXTURE_OPTIONS,
+  AGENT_ACTIVITY_COPY_STYLE_OPTIONS,
+  CHAT_START_COMPOSER_PLACEMENT_OPTIONS,
+  CHAT_SURFACE_STYLE_OPTIONS,
   INTERFACE_CONTRAST_OPTIONS,
   INTERFACE_DENSITY_OPTIONS,
   normalizeHexColor,
@@ -41,6 +48,7 @@ import {
 } from "../../personalization";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import {
   SettingResetButton,
   SettingsPageContainer,
@@ -561,6 +569,108 @@ export function PersonalizationSettingsPanel() {
               options={BACKGROUND_TEXTURE_OPTIONS}
               value={settings.backgroundTexture}
               onChange={(backgroundTexture) => updateSettings({ backgroundTexture })}
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Chat experience" icon={<MessageSquareIcon className="size-3.5" />}>
+        <SettingsRow
+          title="Chat surface"
+          description="Changes the conversation background and composer chrome."
+          resetAction={
+            settings.chatSurfaceStyle !== DEFAULT_UNIFIED_SETTINGS.chatSurfaceStyle ? (
+              <SettingResetButton
+                label="chat surface"
+                onClick={() =>
+                  updateSettings({ chatSurfaceStyle: DEFAULT_UNIFIED_SETTINGS.chatSurfaceStyle })
+                }
+              />
+            ) : null
+          }
+          control={
+            <OptionSelect<ChatSurfaceStyle>
+              ariaLabel="Chat surface"
+              options={CHAT_SURFACE_STYLE_OPTIONS}
+              value={settings.chatSurfaceStyle}
+              onChange={(chatSurfaceStyle) => updateSettings({ chatSurfaceStyle })}
+            />
+          }
+        />
+
+        <SettingsRow
+          title="New chat composer"
+          description="Choose whether a fresh thread opens with the composer centered or anchored."
+          resetAction={
+            settings.chatStartComposerPlacement !==
+            DEFAULT_UNIFIED_SETTINGS.chatStartComposerPlacement ? (
+              <SettingResetButton
+                label="new chat composer"
+                onClick={() =>
+                  updateSettings({
+                    chatStartComposerPlacement: DEFAULT_UNIFIED_SETTINGS.chatStartComposerPlacement,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <OptionSelect<ChatStartComposerPlacement>
+              ariaLabel="New chat composer placement"
+              options={CHAT_START_COMPOSER_PLACEMENT_OPTIONS}
+              value={settings.chatStartComposerPlacement}
+              onChange={(chatStartComposerPlacement) =>
+                updateSettings({ chatStartComposerPlacement })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Prompt suggestions"
+          description="Shows a project-aware starter line on new chats."
+          resetAction={
+            settings.chatPromptSuggestions !== DEFAULT_UNIFIED_SETTINGS.chatPromptSuggestions ? (
+              <SettingResetButton
+                label="prompt suggestions"
+                onClick={() =>
+                  updateSettings({
+                    chatPromptSuggestions: DEFAULT_UNIFIED_SETTINGS.chatPromptSuggestions,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              aria-label="Prompt suggestions"
+              checked={settings.chatPromptSuggestions}
+              onCheckedChange={(chatPromptSuggestions) => updateSettings({ chatPromptSuggestions })}
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Activity language"
+          description="Controls the short status text shown while an agent is running."
+          resetAction={
+            settings.agentActivityCopyStyle !== DEFAULT_UNIFIED_SETTINGS.agentActivityCopyStyle ? (
+              <SettingResetButton
+                label="activity language"
+                onClick={() =>
+                  updateSettings({
+                    agentActivityCopyStyle: DEFAULT_UNIFIED_SETTINGS.agentActivityCopyStyle,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <OptionSelect<AgentActivityCopyStyle>
+              ariaLabel="Activity language"
+              options={AGENT_ACTIVITY_COPY_STYLE_OPTIONS}
+              value={settings.agentActivityCopyStyle}
+              onChange={(agentActivityCopyStyle) => updateSettings({ agentActivityCopyStyle })}
             />
           }
         />

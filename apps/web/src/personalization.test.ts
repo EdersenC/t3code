@@ -71,6 +71,7 @@ describe("personalization palette", () => {
       backgroundTexture: "visible",
       interfaceContrast: "high",
       interfaceDensity: "compact",
+      chatSurfaceStyle: "crisp",
       uiAccentColor: "emerald",
       uiSecondaryColor: "violet",
     };
@@ -82,6 +83,8 @@ describe("personalization palette", () => {
     expect(tokens["--sidebar"]).toContain("var(--color-violet-300)");
     expect(tokens["--border"]).toBe("rgb(255 255 255 / 0.18)");
     expect(tokens["--app-texture-opacity"]).toBe("0.07");
+    expect(tokens["--app-chat-background"]).toContain("var(--background)");
+    expect(tokens["--app-composer-fill"]).toContain("var(--card)");
   });
 
   it("resolves custom colors and typography tokens", () => {
@@ -124,6 +127,7 @@ describe("personalization palette", () => {
       backgroundTexture: "none",
       interfaceContrast: "high",
       interfaceDensity: "spacious",
+      chatSurfaceStyle: "flat",
       uiAccentColor: "rose",
       uiSecondaryColor: "slate",
     };
@@ -140,7 +144,11 @@ describe("personalization palette", () => {
       "var(--color-slate-500)",
     );
     expect(documentStub.documentElement.style.getPropertyValue("--app-texture-opacity")).toBe("0");
+    expect(documentStub.documentElement.style.getPropertyValue("--app-chat-background")).toContain(
+      "var(--background)",
+    );
     expect(documentStub.documentElement.dataset.interfaceDensity).toBe("spacious");
+    expect(documentStub.documentElement.dataset.chatSurfaceStyle).toBe("flat");
     expect(documentStub.documentElement.style.getPropertyValue("--font-sans")).toContain("DM Sans");
     expect(documentStub.documentElement.dataset.interfaceContrast).toBe("high");
     expect(documentStub.documentElement.dataset.uiFontSize).toBe("default");
