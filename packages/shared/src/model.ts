@@ -20,6 +20,8 @@ const OLLAMA_CLOUD_MODEL_SUFFIXES = [
   OLLAMA_CLOUD_MODEL_SUFFIX,
   OLLAMA_CLOUD_MODEL_DASH_SUFFIX,
 ] as const;
+const LOCAL_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("local");
+const LOCAL_MODEL_SLUG_PREFIX = "local-vllm/";
 
 export interface SelectableModelOption {
   slug: string;
@@ -266,6 +268,10 @@ export function normalizeModelSlug(
     !normalized.startsWith(OLLAMA_MODEL_SLUG_PREFIX)
   ) {
     return OLLAMA_MODEL_SLUG_PREFIX + normalized;
+  }
+
+  if (provider === LOCAL_PROVIDER_DRIVER_KIND && !normalized.startsWith(LOCAL_MODEL_SLUG_PREFIX)) {
+    return LOCAL_MODEL_SLUG_PREFIX + normalized;
   }
 
   return normalized;

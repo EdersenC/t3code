@@ -107,6 +107,14 @@ describe("normalizeModelSlug", () => {
       "ollama/gpt-oss-120b-cloud",
     );
   });
+
+  it("prefixes Local vLLM model ids for the OpenCode harness", () => {
+    const local = ProviderDriverKind.make("local");
+    expect(normalizeModelSlug("Qwen/Qwen3-8B-AWQ", local)).toBe("local-vllm/Qwen/Qwen3-8B-AWQ");
+    expect(normalizeModelSlug(" local-vllm/Qwen/Qwen3-8B-AWQ ", local)).toBe(
+      "local-vllm/Qwen/Qwen3-8B-AWQ",
+    );
+  });
 });
 
 describe("resolveModelSlugForProvider", () => {

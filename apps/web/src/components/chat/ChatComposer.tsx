@@ -121,6 +121,7 @@ import {
   deriveLatestContextWindowSnapshot,
   formatProviderDisplayName,
 } from "../../lib/contextWindow";
+import { deriveCurrentModelAnalytics, type ModelAnalyticsRollup } from "../../lib/modelAnalytics";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -330,6 +331,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
   activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
+  activeModelAnalytics: ReturnType<typeof deriveCurrentModelAnalytics>;
+  projectModelAnalytics: ModelAnalyticsRollup | null;
   activeThreadProviderDisplayName: string | null;
   isPreparingWorktree: boolean;
   pendingAction: {
@@ -356,6 +359,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       {props.activeContextWindow ? (
         <ContextWindowMeter
           usage={props.activeContextWindow}
+          analytics={props.activeModelAnalytics}
+          projectAnalytics={props.projectModelAnalytics}
           providerDisplayName={props.activeThreadProviderDisplayName}
         />
       ) : null}
@@ -489,6 +494,7 @@ export interface ChatComposerProps {
 
   // Context window
   activeThreadActivities: Thread["activities"] | undefined;
+  projectModelAnalytics: ModelAnalyticsRollup | null;
 
   // Misc
   resolvedTheme: "light" | "dark";
@@ -579,6 +585,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
     activeThreadActivities,
+    projectModelAnalytics,
     resolvedTheme,
     settings,
     keybindings,
@@ -852,6 +859,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activeContextWindow = useMemo(
     () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
     [activeThreadActivities],
+  );
+  const activeModelAnalytics = useMemo(
+    () =>
+      deriveCurrentModelAnalytics({
+        activities: activeThreadActivities ?? [],
+        latestTurn: activeThread?.latestTurn ?? null,
+      }),
+    [activeThreadActivities, activeThread?.latestTurn],
   );
   const activeThreadProviderDisplayName = useMemo(() => {
     if (!activeThreadModelSelection) return null;
@@ -2601,6 +2616,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}
+                  activeModelAnalytics={activeModelAnalytics}
+                  projectModelAnalytics={projectModelAnalytics}
                   activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                   pendingAction={pendingPrimaryAction}
                   isRunning={phase === "running"}

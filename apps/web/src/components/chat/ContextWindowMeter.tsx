@@ -1,5 +1,10 @@
 import { cn } from "~/lib/utils";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
+import {
+  type CurrentModelAnalytics,
+  type ModelAnalyticsRollup,
+  formatTokensPerSecond,
+} from "../../lib/modelAnalytics";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 
 function formatPercentage(value: number | null): string | null {
@@ -14,9 +19,11 @@ function formatPercentage(value: number | null): string | null {
 
 export function ContextWindowMeter(props: {
   usage: ContextWindowSnapshot;
+  analytics?: CurrentModelAnalytics | null | undefined;
+  projectAnalytics?: ModelAnalyticsRollup | null | undefined;
   providerDisplayName?: string | null;
 }) {
-  const { usage, providerDisplayName } = props;
+  const { usage, analytics, projectAnalytics, providerDisplayName } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const radius = 9.75;
@@ -24,6 +31,17 @@ export function ContextWindowMeter(props: {
   const dashOffset = circumference - (normalizedPercentage / 100) * circumference;
   const totalProcessedTokens = usage.totalProcessedTokens ?? null;
   const showTotalProcessed = totalProcessedTokens !== null && totalProcessedTokens > 0;
+  const currentTurn = analytics?.currentTurn ?? null;
+  const session = analytics?.session ?? null;
+  const project = projectAnalytics ?? null;
+  const currentTurnTps =
+    currentTurn && currentTurn.durationMs !== null
+      ? formatTokensPerSecond(
+          currentTurn.totalTokens / Math.max(0.001, currentTurn.durationMs / 1000),
+        )
+      : null;
+  const sessionTps = session ? formatTokensPerSecond(session.tokensPerSecond) : null;
+  const projectTps = project ? formatTokensPerSecond(project.tokensPerSecond) : null;
   const isOverloaded = normalizedPercentage > 90;
   const usageColor = isOverloaded ? "var(--color-red-500)" : "var(--color-blue-500)";
 
@@ -120,6 +138,48 @@ export function ContextWindowMeter(props: {
               </span>
             </div>
           ) : null}
+          {currentTurn ? (
+            <div className="border-border/60 border-t pt-2">
+              <div className="mb-1 font-medium text-[11px] text-muted-foreground/70">
+                Current Turn
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
+                <Metric label="Input" value={formatContextWindowTokens(currentTurn.inputTokens)} />
+                <Metric
+                  label="Output"
+                  value={formatContextWindowTokens(currentTurn.outputTokens)}
+                />
+                <Metric label="Total" value={formatContextWindowTokens(currentTurn.totalTokens)} />
+                <Metric label="Speed" value={currentTurnTps ?? "—"} />
+              </div>
+            </div>
+          ) : null}
+          {session && session.turnCount > 0 ? (
+            <div className="border-border/60 border-t pt-2">
+              <div className="mb-1 font-medium text-[11px] text-muted-foreground/70">
+                Session Total
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
+                <Metric label="Turns" value={String(session.turnCount)} />
+                <Metric label="Tokens" value={formatContextWindowTokens(session.totalTokens)} />
+                <Metric label="Output" value={formatContextWindowTokens(session.outputTokens)} />
+                <Metric label="Speed" value={sessionTps ?? "—"} />
+              </div>
+            </div>
+          ) : null}
+          {project && project.turnCount > 0 ? (
+            <div className="border-border/60 border-t pt-2">
+              <div className="mb-1 font-medium text-[11px] text-muted-foreground/70">
+                Project Total
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
+                <Metric label="Turns" value={String(project.turnCount)} />
+                <Metric label="Tokens" value={formatContextWindowTokens(project.totalTokens)} />
+                <Metric label="Output" value={formatContextWindowTokens(project.outputTokens)} />
+                <Metric label="Speed" value={projectTps ?? "—"} />
+              </div>
+            </div>
+          ) : null}
           {usage.compactsAutomatically ? (
             <div className="mt-1 text-pretty text-[11px] font-medium text-muted-foreground/70">
               {providerDisplayName ?? "It"} automatically compacts its context when needed.
@@ -128,5 +188,14 @@ export function ContextWindowMeter(props: {
         </div>
       </PopoverPopup>
     </Popover>
+  );
+}
+
+function Metric(props: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-muted-foreground/60">{props.label}</span>
+      <span className="font-medium tabular-nums text-muted-foreground/85">{props.value}</span>
+    </div>
   );
 }

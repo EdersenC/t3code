@@ -562,6 +562,255 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("aggregates project model analytics from project thread usage activities", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES
+          (
+            'project-analytics',
+            'Analytics',
+            '/tmp/analytics',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-05-01T00:00:00.000Z',
+            '2026-05-01T00:00:01.000Z',
+            NULL
+          ),
+          (
+            'project-other',
+            'Other',
+            '/tmp/other',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-05-01T00:00:00.000Z',
+            '2026-05-01T00:00:01.000Z',
+            NULL
+          )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES
+          (
+            'thread-analytics-a',
+            'project-analytics',
+            'A',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            'turn-a',
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:00.000Z',
+            '2026-05-01T00:00:01.000Z',
+            NULL,
+            NULL
+          ),
+          (
+            'thread-analytics-b',
+            'project-analytics',
+            'B',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            'turn-b',
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:00.000Z',
+            '2026-05-01T00:00:01.000Z',
+            NULL,
+            NULL
+          ),
+          (
+            'thread-archived',
+            'project-analytics',
+            'Archived',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            'turn-archived',
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:00.000Z',
+            '2026-05-01T00:00:01.000Z',
+            '2026-05-01T00:00:02.000Z',
+            NULL
+          ),
+          (
+            'thread-other-project',
+            'project-other',
+            'Other',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            'turn-other',
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:00.000Z',
+            '2026-05-01T00:00:01.000Z',
+            NULL,
+            NULL
+          )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        VALUES
+          (
+            'usage-a-malformed-old',
+            'thread-analytics-a',
+            'turn-a',
+            'info',
+            'context-window.updated',
+            'usage',
+            'not-json',
+            0,
+            '2026-05-01T00:00:01.500Z'
+          ),
+          (
+            'usage-a-early',
+            'thread-analytics-a',
+            'turn-a',
+            'info',
+            'context-window.updated',
+            'usage',
+            '{"usedTokens":100,"lastInputTokens":70,"lastOutputTokens":30,"durationMs":1000}',
+            1,
+            '2026-05-01T00:00:02.000Z'
+          ),
+          (
+            'usage-a-latest',
+            'thread-analytics-a',
+            'turn-a',
+            'info',
+            'context-window.updated',
+            'usage',
+            '{"usedTokens":200,"lastInputTokens":140,"lastOutputTokens":60,"durationMs":2000}',
+            2,
+            '2026-05-01T00:00:03.000Z'
+          ),
+          (
+            'usage-b',
+            'thread-analytics-b',
+            'turn-b',
+            'info',
+            'context-window.updated',
+            'usage',
+            '{"usedTokens":300,"lastInputTokens":200,"lastOutputTokens":100,"durationMs":3000}',
+            1,
+            '2026-05-01T00:00:04.000Z'
+          ),
+          (
+            'usage-b-shared-turn',
+            'thread-analytics-b',
+            'turn-a',
+            'info',
+            'context-window.updated',
+            'usage',
+            '{"usedTokens":400,"lastInputTokens":250,"lastOutputTokens":150,"durationMs":4000}',
+            2,
+            '2026-05-01T00:00:04.500Z'
+          ),
+          (
+            'usage-archived',
+            'thread-archived',
+            'turn-archived',
+            'info',
+            'context-window.updated',
+            'usage',
+            '{"usedTokens":100,"lastInputTokens":50,"lastOutputTokens":50,"durationMs":1000}',
+            1,
+            '2026-05-01T00:00:05.000Z'
+          ),
+          (
+            'usage-other-project',
+            'thread-other-project',
+            'turn-other',
+            'info',
+            'context-window.updated',
+            'usage',
+            '{"usedTokens":999,"lastInputTokens":999,"lastOutputTokens":0,"durationMs":1000}',
+            1,
+            '2026-05-01T00:00:06.000Z'
+          )
+      `;
+
+      const analytics = yield* snapshotQuery.getProjectModelAnalytics(
+        ProjectId.make("project-analytics"),
+      );
+
+      assert.deepEqual(analytics, {
+        turnCount: 4,
+        inputTokens: 640,
+        outputTokens: 360,
+        totalTokens: 1000,
+        durationMs: 10000,
+        tokensPerSecond: 100,
+      });
+    }),
+  );
+
   it.effect(
     "reads targeted project, thread, and count queries without hydrating the full snapshot",
     () =>

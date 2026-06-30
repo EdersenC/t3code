@@ -186,6 +186,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { useProjectModelAnalytics } from "../state/queries";
 import {
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
@@ -1389,6 +1390,10 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useProject(activeProjectRef);
+  const activeProjectModelAnalytics = useProjectModelAnalytics(
+    activeThread?.environmentId ?? null,
+    activeThread?.projectId ?? null,
+  );
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
   );
@@ -4883,6 +4888,7 @@ function ChatViewContent(props: ChatViewProps) {
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
+                threadActivities={activeThread.activities}
                 latestTurn={activeLatestTurn}
                 runningTurnId={
                   activeThread.session?.status === "running"
@@ -4984,6 +4990,7 @@ function ChatViewContent(props: ChatViewProps) {
                       activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
                       activeThreadModelSelection={activeThread?.modelSelection}
                       activeThreadActivities={activeThread?.activities}
+                      projectModelAnalytics={activeProjectModelAnalytics.data}
                       resolvedTheme={resolvedTheme}
                       settings={settings}
                       keybindings={keybindings}

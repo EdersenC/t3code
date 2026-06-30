@@ -193,6 +193,15 @@ describe("OrchestrationEngine", () => {
           getSnapshotSequence: () =>
             Effect.succeed({ snapshotSequence: projectionSnapshot.snapshotSequence }),
           getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 1 }),
+          getProjectModelAnalytics: () =>
+            Effect.succeed({
+              turnCount: 0,
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              durationMs: null,
+              tokensPerSecond: null,
+            }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),

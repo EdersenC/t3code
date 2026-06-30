@@ -7,6 +7,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./modelAnalytics": {
+      "types": "./src/modelAnalytics.ts",
+      "import": "./src/modelAnalytics.ts"
+    },
     "./advertisedEndpoint": {
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"

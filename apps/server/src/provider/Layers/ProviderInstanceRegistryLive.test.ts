@@ -25,10 +25,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  DEFAULT_LOCAL_CONTEXT_WINDOW,
+  DEFAULT_LOCAL_OUTPUT_TOKEN_LIMIT,
   type ClaudeSettings,
   type CodexSettings,
   type CursorSettings,
   type GrokSettings,
+  type LocalSettings,
   type OpenCodeSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
@@ -44,6 +47,7 @@ import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
+import { LocalDriver } from "../Drivers/LocalDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
@@ -95,6 +99,16 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   serverUrl: "",
   serverPassword: "",
   customModels: [],
+  ...overrides,
+});
+
+const makeLocalConfig = (overrides: Partial<LocalSettings>): LocalSettings => ({
+  enabled: false,
+  baseUrl: "http://127.0.0.1:8018",
+  binaryPath: "opencode",
+  customModels: [],
+  contextWindow: DEFAULT_LOCAL_CONTEXT_WINDOW,
+  outputTokenLimit: DEFAULT_LOCAL_OUTPUT_TOKEN_LIMIT,
   ...overrides,
 });
 
@@ -258,12 +272,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
+      const localId = ProviderInstanceId.make("local_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
+      const localDriverKind = ProviderDriverKind.make("local");
 
       const configMap: ProviderInstanceConfigMap = {
         [codexId]: {
@@ -299,10 +315,16 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeOpenCodeConfig({}),
         },
+        [localId]: {
+          driver: localDriverKind,
+          displayName: "Local",
+          enabled: false,
+          config: makeLocalConfig({}),
+        },
       };
 
       const { registry } = yield* makeProviderInstanceRegistry({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
+        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver, LocalDriver],
         configMap,
       });
 
@@ -312,9 +334,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, cursorId, grokId, openCodeId, localId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -325,16 +347,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
+      const local = yield* registry.getInstance(localId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
+      expect(local?.driverKind).toBe(localDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
+      expect(local?.displayName).toBe("Local");
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
@@ -347,6 +372,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.adapter,
         grok!.adapter,
         openCode!.adapter,
+        local!.adapter,
       ];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
@@ -355,6 +381,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.textGeneration,
         grok!.textGeneration,
         openCode!.textGeneration,
+        local!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
       const snapshots = [
@@ -363,6 +390,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.snapshot,
         grok!.snapshot,
         openCode!.snapshot,
+        local!.snapshot,
       ];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
@@ -405,6 +433,12 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );
+
+      const localSnapshot = yield* local!.snapshot.getSnapshot;
+      expect(localSnapshot.instanceId).toBe(localId);
+      expect(localSnapshot.driver).toBe(localDriverKind);
+      expect(localSnapshot.enabled).toBe(false);
+      expect(localSnapshot.continuation?.groupKey).toBe(`${localDriverKind}:instance:${localId}`);
     }).pipe(Effect.provide(testLayer)),
   );
 });

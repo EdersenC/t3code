@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { EventId, TurnId } from "@t3tools/contracts";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
@@ -636,6 +637,79 @@ describe("deriveMessagesTimelineRows", () => {
     // User message (00:00:00) → trailing work entry (00:00:12).
     expect(foldRow?.turnId).toBe("turn-1");
     expect(foldRow?.label).toBe("Worked for 12s");
+  });
+
+  it("adds compact token analytics to folded turn labels when usage is available", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user" as const,
+            text: "inspect this",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:04Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:04Z",
+            turnId: "turn-1" as never,
+            label: "Read files",
+            tone: "tool" as const,
+          },
+        },
+        {
+          id: "assistant-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:08Z",
+          message: {
+            id: "assistant-1" as never,
+            role: "assistant" as const,
+            text: "Done",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:08Z",
+            updatedAt: "2026-01-01T00:00:08Z",
+            streaming: false,
+          },
+        },
+      ],
+      threadActivities: [
+        {
+          id: EventId.make("usage-1"),
+          turnId: TurnId.make("turn-1"),
+          kind: "context-window.updated",
+          tone: "info",
+          summary: "Context updated",
+          payload: {
+            usedTokens: 800,
+            lastInputTokens: 600,
+            lastOutputTokens: 200,
+          },
+          createdAt: "2026-01-01T00:00:08Z",
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const foldRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "turn-fold" }> =>
+        row.kind === "turn-fold",
+    );
+
+    expect(foldRow?.label).toBe("Worked for 8.0s · 800 tokens · 100 tok/s");
   });
 
   it("uses latest-turn timings and the stopped label for an interrupted latest turn", () => {

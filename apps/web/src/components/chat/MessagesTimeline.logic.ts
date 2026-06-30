@@ -7,7 +7,17 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import {
+  type MessageId,
+  type OrchestrationLatestTurn,
+  type OrchestrationThreadActivity,
+  type TurnId,
+} from "@t3tools/contracts";
+import {
+  deriveTurnUsageAnalyticsByTurnId,
+  formatTurnAnalyticsSuffix,
+  type TurnUsageAnalytics,
+} from "../../lib/modelAnalytics";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 
@@ -195,6 +205,7 @@ function deriveTurnFolds(input: {
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestTurn: TimelineLatestTurn | null;
   unsettledTurnId: TurnId | null;
+  turnUsageAnalyticsByTurnId: ReadonlyMap<TurnId, TurnUsageAnalytics>;
 }): ReadonlyMap<string, TurnFold> {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
@@ -291,12 +302,16 @@ function deriveTurnFolds(input: {
               lastEntryEnd,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+    const analyticsSuffix = formatTurnAnalyticsSuffix(
+      input.turnUsageAnalyticsByTurnId.get(turnId) ?? null,
+      elapsedMs,
+    );
     const label = isLatestInterruptedTurn
       ? duration
-        ? `You stopped after ${duration}`
+        ? `You stopped after ${duration}${analyticsSuffix ? ` · ${analyticsSuffix}` : ""}`
         : "You stopped this response"
       : duration
-        ? `Worked for ${duration}`
+        ? `Worked for ${duration}${analyticsSuffix ? ` · ${analyticsSuffix}` : ""}`
         : "Worked";
 
     foldsByAnchorEntryId.set(firstEntry.id, {
@@ -312,6 +327,7 @@ function deriveTurnFolds(input: {
 
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  threadActivities?: ReadonlyArray<OrchestrationThreadActivity> | undefined;
   latestTurn?: TimelineLatestTurn | null;
   runningTurnId?: TurnId | null;
   expandedTurnIds?: ReadonlySet<TurnId>;
@@ -330,11 +346,13 @@ export function deriveMessagesTimelineRows(input: {
     input.latestTurn ?? null,
     input.runningTurnId ?? null,
   );
+  const turnUsageAnalyticsByTurnId = deriveTurnUsageAnalyticsByTurnId(input.threadActivities ?? []);
   const foldsByAnchorEntryId = deriveTurnFolds({
     timelineEntries: input.timelineEntries,
     terminalAssistantMessageIds,
     latestTurn: input.latestTurn ?? null,
     unsettledTurnId,
+    turnUsageAnalyticsByTurnId,
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {

@@ -25,6 +25,7 @@ import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
 import { GroqDriver, type GroqDriverEnv } from "./Drivers/GroqDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
+import { LocalDriver, type LocalDriverEnv } from "./Drivers/LocalDriver.ts";
 import { OllamaDriver, type OllamaDriverEnv } from "./Drivers/OllamaDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
 import type { AnyProviderDriver } from "./ProviderDriver.ts";
@@ -40,6 +41,7 @@ export type BuiltInDriversEnv =
   | CursorDriverEnv
   | GrokDriverEnv
   | GroqDriverEnv
+  | LocalDriverEnv
   | OllamaDriverEnv
   | OpenCodeDriverEnv;
 
@@ -56,4 +58,5 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   GroqDriver,
   OpenCodeDriver,
   OllamaDriver,
+  LocalDriver,
 ];
