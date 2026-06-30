@@ -13,6 +13,7 @@ import {
   CloudIcon,
   DownloadIcon,
   HardDriveIcon,
+  HashIcon,
   LayoutGridIcon,
   ListIcon,
   LoaderCircleIcon,
@@ -159,7 +160,6 @@ function formatDuration(startedAt: string, completedAt: string | undefined): str
 function modelBadges(model: LocalModelHubModel): ReadonlyArray<string> {
   return [
     model.format !== "unknown" ? model.format : null,
-    model.metadata.parameterCount ?? null,
     model.metadata.quantization ?? null,
     model.metadata.fileCount !== undefined ? `${model.metadata.fileCount} files` : null,
     ...model.metadata.tags.slice(0, 3),
@@ -176,6 +176,28 @@ function isActiveDownloadStatus(status: string): boolean {
   return status === "queued" || status === "running";
 }
 
+function ModelStatChips({ model }: { readonly model: LocalModelHubModel }) {
+  const size = formatBytes(model.metadata.totalSizeBytes ?? model.sizeBytes);
+  return (
+    <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+      <span className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 text-xs font-semibold text-sky-800 dark:text-sky-200">
+        <HardDriveIcon className="size-3.5 shrink-0" />
+        <span className="text-[10px] font-medium text-sky-700/80 dark:text-sky-200/80">Size</span>
+        <span className="truncate">{size}</span>
+      </span>
+      {model.metadata.parameterCount ? (
+        <span className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border border-amber-500/35 bg-amber-500/12 px-2.5 text-xs font-semibold text-amber-900 dark:text-amber-100">
+          <HashIcon className="size-3.5 shrink-0" />
+          <span className="text-[10px] font-medium text-amber-800/80 dark:text-amber-100/80">
+            Params
+          </span>
+          <span className="truncate">{model.metadata.parameterCount}</span>
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function ModelSummary({ model }: { readonly model: LocalModelHubModel }) {
   const badges = modelBadges(model);
   return (
@@ -189,9 +211,8 @@ function ModelSummary({ model }: { readonly model: LocalModelHubModel }) {
           {model.source === "huggingface" ? "HF" : "Ollama"}
         </Badge>
       </div>
+      <ModelStatChips model={model} />
       <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>{formatBytes(model.metadata.totalSizeBytes ?? model.sizeBytes)}</span>
-        {model.metadata.parameterCount ? <span>{model.metadata.parameterCount} params</span> : null}
         {model.metadata.downloads !== undefined ? (
           <span>{model.metadata.downloads} downloads</span>
         ) : null}
