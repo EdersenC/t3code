@@ -673,6 +673,11 @@ export const LocalModelRuntimeSettings = Schema.Struct({
 });
 export type LocalModelRuntimeSettings = typeof LocalModelRuntimeSettings.Type;
 
+export const LocalModelHubSettings = Schema.Struct({
+  modelRoot: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type LocalModelHubSettings = typeof LocalModelHubSettings.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -725,6 +730,7 @@ export const ServerSettings = Schema.Struct({
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   localModelRuntime: LocalModelRuntimeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  localModelHub: LocalModelHubSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -833,6 +839,15 @@ const OllamaSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const LocalSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  contextWindow: Schema.optionalKey(PositiveInt),
+  outputTokenLimit: Schema.optionalKey(PositiveInt),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -846,6 +861,11 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       preferredRuntime: Schema.optionalKey(LocalModelRuntimeKind),
       notes: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  localModelHub: Schema.optionalKey(
+    Schema.Struct({
+      modelRoot: Schema.optionalKey(TrimmedString),
     }),
   ),
   observability: Schema.optionalKey(
@@ -863,6 +883,7 @@ export const ServerSettingsPatch = Schema.Struct({
       groq: Schema.optionalKey(GroqSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       ollama: Schema.optionalKey(OllamaSettingsPatch),
+      local: Schema.optionalKey(LocalSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual

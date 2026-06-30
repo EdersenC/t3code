@@ -5,6 +5,7 @@ import {
   CloudIcon,
   FolderPlusIcon,
   Globe2Icon,
+  HardDriveDownloadIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -2710,6 +2711,12 @@ function T3Wordmark() {
 const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
+  const handleLocalModelsClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/local-models" });
+  }, [isMobile, navigate, setOpenMobile]);
   const handleSettingsClick = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -2722,6 +2729,16 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="sm"
+            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+            onClick={handleLocalModelsClick}
+          >
+            <HardDriveDownloadIcon className="size-3.5" />
+            <span className="text-xs">Models</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
             size="sm"
