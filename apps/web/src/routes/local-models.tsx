@@ -3,6 +3,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  type LocalModelHubDownload,
   type LocalModelHubModel,
   type LocalModelHubSearchResult,
   type LocalModelHubSource,
@@ -23,7 +24,7 @@ import {
   SparklesIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 
 import { Badge } from "~/components/ui/badge";
@@ -76,6 +77,7 @@ const SEARCH_PRESETS: ReadonlyArray<{
 ];
 
 type ModelViewMode = "list" | "cards";
+type DownloadStatus = LocalModelHubDownload["status"];
 
 const HUGGING_FACE_METADATA_PATTERNS = [
   "*.json",
@@ -174,6 +176,64 @@ function sourceTone(source: LocalModelHubSource): string {
 
 function isActiveDownloadStatus(status: string): boolean {
   return status === "queued" || status === "running";
+}
+
+function isTerminalDownloadStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function localModelSourceLabel(source: LocalModelHubSource): string {
+  return source === "huggingface" ? "Hugging Face" : "Ollama";
+}
+
+function downloadProfileDescription(profileLabel: string | undefined): string {
+  return profileLabel && profileLabel.length > 0 ? ` (${profileLabel})` : "";
+}
+
+function downloadStartedDescription(input: {
+  readonly modelId: string;
+  readonly source: LocalModelHubSource;
+  readonly profileLabel?: string | undefined;
+  readonly targetPath: string;
+}): string {
+  return `${input.modelId}${downloadProfileDescription(input.profileLabel)} is downloading from ${localModelSourceLabel(input.source)} into ${input.targetPath}.`;
+}
+
+function terminalDownloadToast(download: LocalModelHubDownload) {
+  const duration = formatDuration(download.startedAt, download.completedAt);
+  const durationText = duration ? ` in ${duration}` : "";
+  if (download.status === "completed") {
+    return stackedThreadToast({
+      type: "success",
+      title: "Model download completed",
+      description: `${download.modelId} finished downloading${durationText}.`,
+      data: { dismissAfterVisibleMs: 6_000 },
+    });
+  }
+  if (download.status === "cancelled") {
+    return stackedThreadToast({
+      type: "warning",
+      title: "Model download cancelled",
+      description: `${download.modelId} was cancelled${durationText}.`,
+      data: { dismissAfterVisibleMs: 6_000 },
+    });
+  }
+  if (download.status === "failed") {
+    const detail = download.detail ?? "The download failed.";
+    const logs = download.logTail.length > 0 ? download.logTail.slice(-12).join("\n") : null;
+    return stackedThreadToast({
+      type: "error",
+      title: "Model download failed",
+      description: `${download.modelId}: ${detail}`,
+      data: {
+        expandableContent: logs ? (
+          <pre className="whitespace-pre-wrap text-[11px] leading-4">{logs}</pre>
+        ) : undefined,
+        expandableLabels: { expand: "Show download log", collapse: "Hide download log" },
+      },
+    });
+  }
+  return null;
 }
 
 function ModelStatChips({ model }: { readonly model: LocalModelHubModel }) {
@@ -316,6 +376,7 @@ function ModelDownloadActions({
     options?: {
       readonly includePatterns?: ReadonlyArray<string>;
       readonly excludePatterns?: ReadonlyArray<string>;
+      readonly profileLabel?: string;
     },
   ) => void;
 }) {
@@ -345,6 +406,7 @@ function ModelDownloadActions({
             onDownload(model, {
               includePatterns: profile.includePatterns,
               ...(profile.excludePatterns ? { excludePatterns: profile.excludePatterns } : {}),
+              profileLabel: profile.label,
             })
           }
         >
@@ -385,6 +447,8 @@ function LocalModelsPage() {
   const cancelDownload = useAtomCommand(serverEnvironment.localModelHubCancelDownload, {
     reportFailure: false,
   });
+  const downloadStatusByIdRef = useRef<ReadonlyMap<string, DownloadStatus>>(new Map());
+  const didInitializeDownloadToastWatcherRef = useRef(false);
 
   useEffect(() => {
     setRootDraft(settings.localModelHub.modelRoot);
@@ -409,6 +473,32 @@ function LocalModelsPage() {
     }, 2000);
     return () => window.clearInterval(interval);
   }, [hasActiveDownloads, snapshotQuery]);
+
+  useEffect(() => {
+    const previousStatuses = downloadStatusByIdRef.current;
+    const nextStatuses = new Map(
+      downloads.map((download) => [download.downloadId, download.status]),
+    );
+    if (!didInitializeDownloadToastWatcherRef.current) {
+      didInitializeDownloadToastWatcherRef.current = true;
+      downloadStatusByIdRef.current = nextStatuses;
+      return;
+    }
+    for (const download of downloads) {
+      const previousStatus = previousStatuses.get(download.downloadId);
+      if (
+        previousStatus === undefined ||
+        previousStatus === download.status ||
+        !isActiveDownloadStatus(previousStatus) ||
+        !isTerminalDownloadStatus(download.status)
+      ) {
+        continue;
+      }
+      const toast = terminalDownloadToast(download);
+      if (toast) toastManager.add(toast);
+    }
+    downloadStatusByIdRef.current = nextStatuses;
+  }, [downloads]);
 
   const handleSaveRoot = useCallback(async () => {
     if (primaryEnvironmentId === null) return;
@@ -482,6 +572,7 @@ function LocalModelsPage() {
       options?: {
         readonly includePatterns?: ReadonlyArray<string>;
         readonly excludePatterns?: ReadonlyArray<string>;
+        readonly profileLabel?: string;
       },
     ) => {
       if (primaryEnvironmentId === null) return;
@@ -505,6 +596,24 @@ function LocalModelsPage() {
         );
         return;
       }
+      if (result._tag === "Success") {
+        const download = result.value.download;
+        toastManager.add(
+          stackedThreadToast({
+            type: isActiveDownloadStatus(download.status) ? "loading" : "info",
+            title: isActiveDownloadStatus(download.status)
+              ? "Model download started"
+              : "Model download requested",
+            description: downloadStartedDescription({
+              modelId: download.modelId,
+              source: download.source,
+              profileLabel: options?.profileLabel,
+              targetPath: download.targetPath,
+            }),
+            data: { dismissAfterVisibleMs: 4_000 },
+          }),
+        );
+      }
       snapshotQuery.refresh();
     },
     [primaryEnvironmentId, snapshotQuery, startDownload],
@@ -527,6 +636,16 @@ function LocalModelsPage() {
           }),
         );
         return;
+      }
+      if (result._tag === "Success") {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Download cancellation requested",
+            description: `${result.value.download.modelId} is being cancelled.`,
+            data: { dismissAfterVisibleMs: 4_000 },
+          }),
+        );
       }
       snapshotQuery.refresh();
     },
