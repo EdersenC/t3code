@@ -34,11 +34,12 @@ export function ContextWindowMeter(props: {
   const currentTurn = analytics?.currentTurn ?? null;
   const session = analytics?.session ?? null;
   const project = projectAnalytics ?? null;
-  const currentTurnTps = currentTurn?.durationMs
-    ? formatTokensPerSecond(
-        currentTurn.totalTokens / Math.max(0.001, currentTurn.durationMs / 1000),
-      )
-    : null;
+  const currentTurnTps =
+    currentTurn && currentTurn.durationMs !== null
+      ? formatTokensPerSecond(
+          currentTurn.totalTokens / Math.max(0.001, currentTurn.durationMs / 1000),
+        )
+      : null;
   const sessionTps = session ? formatTokensPerSecond(session.tokensPerSecond) : null;
   const projectTps = project ? formatTokensPerSecond(project.tokensPerSecond) : null;
   const isOverloaded = normalizedPercentage > 90;
