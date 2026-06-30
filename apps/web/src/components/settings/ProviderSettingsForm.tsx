@@ -160,7 +160,7 @@ export function nextProviderConfigWithFieldValue(
     }
 
     const numericValue = Number(trimmed);
-    if (Number.isFinite(numericValue)) {
+    if (Number.isFinite(numericValue) && Number.isInteger(numericValue) && numericValue > 0) {
       base[field.key] = numericValue;
     }
     return Object.keys(base).length > 0 ? base : undefined;
