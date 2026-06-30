@@ -11,6 +11,7 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
+import { composerControlTriggerClassName } from "./composerControlStyles";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
@@ -31,7 +32,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
           <Button
             size="sm"
             variant="ghost"
-            className="h-8 shrink-0 rounded-full border border-border/55 bg-background/55 px-2.5 text-muted-foreground/76 shadow-xs transition-colors hover:border-border/80 hover:bg-background/80 hover:text-foreground/90 data-[state=open]:border-border/80 data-[state=open]:bg-background/85 data-[state=open]:text-foreground"
+            className={composerControlTriggerClassName}
             aria-label="More composer controls"
           />
         }
