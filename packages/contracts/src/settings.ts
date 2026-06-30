@@ -142,10 +142,32 @@ export const BackgroundTexture = Schema.Literals(["none", "subtle", "visible"]);
 export type BackgroundTexture = typeof BackgroundTexture.Type;
 export const DEFAULT_BACKGROUND_TEXTURE: BackgroundTexture = "subtle";
 
+export const ChatSurfaceStyle = Schema.Literals(["soft", "flat", "crisp"]);
+export type ChatSurfaceStyle = typeof ChatSurfaceStyle.Type;
+export const DEFAULT_CHAT_SURFACE_STYLE: ChatSurfaceStyle = "soft";
+
+export const ChatStartComposerPlacement = Schema.Literals(["center", "bottom"]);
+export type ChatStartComposerPlacement = typeof ChatStartComposerPlacement.Type;
+export const DEFAULT_CHAT_START_COMPOSER_PLACEMENT: ChatStartComposerPlacement = "center";
+
+export const AgentActivityCopyStyle = Schema.Literals(["lively", "plain"]);
+export type AgentActivityCopyStyle = typeof AgentActivityCopyStyle.Type;
+export const DEFAULT_AGENT_ACTIVITY_COPY_STYLE: AgentActivityCopyStyle = "lively";
+
 export const ClientSettingsSchema = Schema.Struct({
+  agentActivityCopyStyle: AgentActivityCopyStyle.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_ACTIVITY_COPY_STYLE)),
+  ),
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   backgroundTexture: BackgroundTexture.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BACKGROUND_TEXTURE)),
+  ),
+  chatPromptSuggestions: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  chatStartComposerPlacement: ChatStartComposerPlacement.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_START_COMPOSER_PLACEMENT)),
+  ),
+  chatSurfaceStyle: ChatSurfaceStyle.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_SURFACE_STYLE)),
   ),
   customUiAccentColor: makeHexColorSetting(DEFAULT_CUSTOM_UI_ACCENT_COLOR).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_CUSTOM_UI_ACCENT_COLOR)),
@@ -874,8 +896,12 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  agentActivityCopyStyle: Schema.optionalKey(AgentActivityCopyStyle),
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   backgroundTexture: Schema.optionalKey(BackgroundTexture),
+  chatPromptSuggestions: Schema.optionalKey(Schema.Boolean),
+  chatStartComposerPlacement: Schema.optionalKey(ChatStartComposerPlacement),
+  chatSurfaceStyle: Schema.optionalKey(ChatSurfaceStyle),
   customUiAccentColor: Schema.optionalKey(makeHexColorSetting(DEFAULT_CUSTOM_UI_ACCENT_COLOR)),
   customUiSecondaryColor: Schema.optionalKey(
     makeHexColorSetting(DEFAULT_CUSTOM_UI_SECONDARY_COLOR),

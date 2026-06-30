@@ -49,11 +49,21 @@ describe("ClientSettings personalization", () => {
     expect(decoded.interfaceDensity).toBe(DEFAULT_CLIENT_SETTINGS.interfaceDensity);
     expect(decoded.interfaceContrast).toBe(DEFAULT_CLIENT_SETTINGS.interfaceContrast);
     expect(decoded.backgroundTexture).toBe(DEFAULT_CLIENT_SETTINGS.backgroundTexture);
+    expect(decoded.agentActivityCopyStyle).toBe(DEFAULT_CLIENT_SETTINGS.agentActivityCopyStyle);
+    expect(decoded.chatPromptSuggestions).toBe(DEFAULT_CLIENT_SETTINGS.chatPromptSuggestions);
+    expect(decoded.chatStartComposerPlacement).toBe(
+      DEFAULT_CLIENT_SETTINGS.chatStartComposerPlacement,
+    );
+    expect(decoded.chatSurfaceStyle).toBe(DEFAULT_CLIENT_SETTINGS.chatSurfaceStyle);
   });
 
   it("accepts personalization patches", () => {
     const patch = decodeClientSettingsPatch({
+      agentActivityCopyStyle: "plain",
       backgroundTexture: "visible",
+      chatPromptSuggestions: false,
+      chatStartComposerPlacement: "bottom",
+      chatSurfaceStyle: "crisp",
       customUiAccentColor: "  #123abc  ",
       customUiSecondaryColor: "abc",
       interfaceContrast: "high",
@@ -67,7 +77,11 @@ describe("ClientSettings personalization", () => {
     });
 
     expect(patch).toEqual({
+      agentActivityCopyStyle: "plain",
       backgroundTexture: "visible",
+      chatPromptSuggestions: false,
+      chatStartComposerPlacement: "bottom",
+      chatSurfaceStyle: "crisp",
       customUiAccentColor: "#123abc",
       customUiSecondaryColor: "#aabbcc",
       interfaceContrast: "high",
