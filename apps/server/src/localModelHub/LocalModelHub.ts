@@ -915,6 +915,32 @@ export function makeLocalModelHub(input: {
                 }
               }
             }
+            if (buffered.trim().length > 0) {
+              const line = buffered.trim();
+              active.record = appendLog(active.record, line);
+              try {
+                const event = JSON.parse(line) as {
+                  readonly status?: unknown;
+                  readonly completed?: unknown;
+                  readonly total?: unknown;
+                  readonly error?: unknown;
+                };
+                if (typeof event.error === "string") {
+                  throw new Error(event.error);
+                }
+                if (typeof event.status === "string") {
+                  active.record = { ...active.record, progress: event.status };
+                }
+                if (typeof event.completed === "number" && typeof event.total === "number") {
+                  active.record = {
+                    ...active.record,
+                    progress: `${event.completed}/${event.total} bytes`,
+                  };
+                }
+              } catch (cause) {
+                if (!(cause instanceof SyntaxError)) throw cause;
+              }
+            }
             active.record = {
               ...active.record,
               status: "completed",
