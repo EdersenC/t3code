@@ -1,8 +1,5 @@
 import type {
-  AgentActivityCopyStyle,
   BackgroundTexture,
-  ChatStartComposerPlacement,
-  ChatSurfaceStyle,
   ClientSettings,
   InterfaceContrast,
   InterfaceDensity,
@@ -15,7 +12,6 @@ import type {
 } from "@t3tools/contracts/settings";
 import {
   DEFAULT_BACKGROUND_TEXTURE,
-  DEFAULT_CHAT_SURFACE_STYLE,
   DEFAULT_CUSTOM_UI_ACCENT_COLOR,
   DEFAULT_CUSTOM_UI_SECONDARY_COLOR,
   DEFAULT_INTERFACE_CONTRAST,
@@ -37,7 +33,6 @@ export type ResolvedTheme = "light" | "dark";
 export type PersonalizationSettings = Pick<
   ClientSettings,
   | "backgroundTexture"
-  | "chatSurfaceStyle"
   | "customUiAccentColor"
   | "customUiSecondaryColor"
   | "interfaceContrast"
@@ -64,12 +59,6 @@ export interface PersonalizationOption<T extends string> {
 export interface ColorPaletteOption<T extends string> extends PersonalizationOption<T> {
   readonly swatch: string;
   readonly preview: readonly string[];
-}
-
-interface ChatSurfaceModeTokens {
-  readonly background: string;
-  readonly composerFill: string;
-  readonly railFill: string;
 }
 
 interface AccentModeTokens {
@@ -312,54 +301,6 @@ export const BACKGROUND_TEXTURE_OPTIONS: ReadonlyArray<PersonalizationOption<Bac
     value: "visible",
     label: "Visible",
     description: "Makes background texture more apparent on empty surfaces.",
-  },
-] as const;
-
-export const CHAT_SURFACE_STYLE_OPTIONS: ReadonlyArray<PersonalizationOption<ChatSurfaceStyle>> = [
-  {
-    value: "soft",
-    label: "Soft",
-    description: "Adds subtle depth, calmer panels, and a warmer work surface.",
-  },
-  {
-    value: "flat",
-    label: "Flat",
-    description: "Keeps the chat area close to the base theme with minimal depth.",
-  },
-  {
-    value: "crisp",
-    label: "Crisp",
-    description: "Strengthens the surface and toolbar definition for scan-heavy work.",
-  },
-] as const;
-
-export const CHAT_START_COMPOSER_PLACEMENT_OPTIONS: ReadonlyArray<
-  PersonalizationOption<ChatStartComposerPlacement>
-> = [
-  {
-    value: "center",
-    label: "Centered",
-    description: "Places the composer in the middle of a brand-new empty chat.",
-  },
-  {
-    value: "bottom",
-    label: "Bottom",
-    description: "Keeps new chats anchored to the regular bottom composer.",
-  },
-] as const;
-
-export const AGENT_ACTIVITY_COPY_STYLE_OPTIONS: ReadonlyArray<
-  PersonalizationOption<AgentActivityCopyStyle>
-> = [
-  {
-    value: "lively",
-    label: "Lively",
-    description: "Rotates concise activity words while agents are working.",
-  },
-  {
-    value: "plain",
-    label: "Plain",
-    description: "Uses a steady Working label for lower-motion copy.",
   },
 ] as const;
 
@@ -684,48 +625,6 @@ const TEXTURE_OPACITY: Record<BackgroundTexture, string> = {
   visible: "0.07",
 };
 
-const CHAT_SURFACE_TOKENS: Record<
-  ChatSurfaceStyle,
-  Record<ResolvedTheme, ChatSurfaceModeTokens>
-> = {
-  soft: {
-    light: {
-      background: "color-mix(in srgb, var(--background) 94%, var(--secondary))",
-      composerFill: "color-mix(in srgb, var(--card) 72%, transparent)",
-      railFill: "color-mix(in srgb, var(--muted) 18%, transparent)",
-    },
-    dark: {
-      background: "color-mix(in srgb, var(--background) 88%, var(--secondary))",
-      composerFill: "color-mix(in srgb, var(--card) 82%, transparent)",
-      railFill: "color-mix(in srgb, var(--muted) 22%, transparent)",
-    },
-  },
-  flat: {
-    light: {
-      background: "var(--background)",
-      composerFill: "var(--card)",
-      railFill: "color-mix(in srgb, var(--muted) 10%, transparent)",
-    },
-    dark: {
-      background: "var(--background)",
-      composerFill: "var(--card)",
-      railFill: "color-mix(in srgb, var(--muted) 14%, transparent)",
-    },
-  },
-  crisp: {
-    light: {
-      background: "color-mix(in srgb, var(--background) 90%, var(--muted))",
-      composerFill: "color-mix(in srgb, var(--card) 88%, transparent)",
-      railFill: "color-mix(in srgb, var(--muted) 28%, transparent)",
-    },
-    dark: {
-      background: "color-mix(in srgb, var(--background) 82%, var(--muted))",
-      composerFill: "color-mix(in srgb, var(--card) 94%, transparent)",
-      railFill: "color-mix(in srgb, var(--muted) 32%, transparent)",
-    },
-  },
-};
-
 const UI_FONT_STACKS: Record<UiFontFamily, string> = {
   "dm-sans":
     '"DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
@@ -832,7 +731,6 @@ function customSecondaryTokens(hexColor: string): Record<ResolvedTheme, Secondar
 export function selectPersonalizationSettings(settings: ClientSettings): PersonalizationSettings {
   return {
     backgroundTexture: settings.backgroundTexture,
-    chatSurfaceStyle: settings.chatSurfaceStyle,
     customUiAccentColor: settings.customUiAccentColor,
     customUiSecondaryColor: settings.customUiSecondaryColor,
     interfaceContrast: settings.interfaceContrast,
@@ -906,11 +804,6 @@ export function resolvePersonalizationTokens(
     DEFAULT_BACKGROUND_TEXTURE,
     BACKGROUND_TEXTURE_OPTIONS,
   );
-  const chatSurfaceStyle = resolveKnownValue(
-    settings.chatSurfaceStyle,
-    DEFAULT_CHAT_SURFACE_STYLE,
-    CHAT_SURFACE_STYLE_OPTIONS,
-  );
   const uiCodeFontSize = resolveKnownValue(
     settings.uiCodeFontSize,
     DEFAULT_UI_CODE_FONT_SIZE,
@@ -949,7 +842,6 @@ export function resolvePersonalizationTokens(
       ? customSecondaryTokens(customSecondaryColor)[resolvedTheme]
       : SECONDARY_TOKENS[secondaryColor][resolvedTheme];
   const contrast = CONTRAST_TOKENS[interfaceContrast][resolvedTheme];
-  const chatSurface = CHAT_SURFACE_TOKENS[chatSurfaceStyle][resolvedTheme];
   const foreground = resolvedTheme === "dark" ? DARK_FOREGROUND : LIGHT_FOREGROUND;
 
   return {
@@ -957,9 +849,6 @@ export function resolvePersonalizationTokens(
     "--accent-foreground": foreground,
     "--app-code-font-scale": UI_CODE_FONT_SCALE_TOKENS[uiCodeFontSize],
     "--app-root-font-size": UI_FONT_SIZE_TOKENS[uiFontSize],
-    "--app-chat-background": chatSurface.background,
-    "--app-composer-fill": chatSurface.composerFill,
-    "--app-composer-rail-fill": chatSurface.railFill,
     "--app-terminal-font-size": TERMINAL_FONT_SIZE_TOKENS[uiCodeFontSize] + "px",
     "--app-texture-opacity": TEXTURE_OPACITY[backgroundTexture],
     "--border": contrast.border,
@@ -994,7 +883,6 @@ export function applyPersonalizationSettings(
   }
 
   root.dataset.backgroundTexture = settings.backgroundTexture;
-  root.dataset.chatSurfaceStyle = settings.chatSurfaceStyle;
   root.dataset.interfaceContrast = settings.interfaceContrast;
   root.dataset.interfaceDensity = resolveKnownValue(
     settings.interfaceDensity,
@@ -1024,7 +912,6 @@ export function usePersonalizationSync(): void {
   }, [
     resolvedTheme,
     settings.backgroundTexture,
-    settings.chatSurfaceStyle,
     settings.customUiAccentColor,
     settings.customUiSecondaryColor,
     settings.interfaceContrast,

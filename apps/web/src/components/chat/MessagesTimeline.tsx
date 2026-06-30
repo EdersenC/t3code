@@ -6,7 +6,6 @@ import {
   type ServerProviderSkill,
   type TurnId,
 } from "@t3tools/contracts";
-import type { AgentActivityCopyStyle } from "@t3tools/contracts/settings";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
@@ -107,7 +106,6 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
-import { agentActivityWord } from "./activityPhrases";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -133,7 +131,6 @@ interface TimelineRowSharedState {
 }
 
 interface TimelineRowActivityState {
-  activityCopyStyle: AgentActivityCopyStyle;
   isWorking: boolean;
   isRevertingCheckpoint: boolean;
   activeTurnInProgress: boolean;
@@ -151,7 +148,6 @@ const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "d
 
 interface MessagesTimelineProps {
   isWorking: boolean;
-  activityCopyStyle?: AgentActivityCopyStyle;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
   listRef: React.RefObject<LegendListRef | null>;
@@ -185,7 +181,6 @@ interface MessagesTimelineProps {
 
 export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
-  activityCopyStyle = "lively",
   activeTurnInProgress,
   activeTurnStartedAt,
   listRef,
@@ -382,12 +377,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
-      activityCopyStyle,
       isWorking,
       isRevertingCheckpoint,
       activeTurnInProgress,
     }),
-    [activityCopyStyle, activeTurnInProgress, isRevertingCheckpoint, isWorking],
+    [activeTurnInProgress, isRevertingCheckpoint, isWorking],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -712,12 +706,6 @@ function ProposedPlanTimelineRow({
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const activity = use(TimelineRowActivityCtx);
-  const activityLabel =
-    activity.activityCopyStyle === "lively"
-      ? agentActivityWord(`${row.id}:${row.createdAt ?? "pending"}`)
-      : "Working";
-
   return (
     <div className="py-0.5 pl-1.5">
       <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
@@ -729,10 +717,10 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
         <span>
           {row.createdAt ? (
             <>
-              {activityLabel} for <WorkingTimer createdAt={row.createdAt} />
+              Working for <WorkingTimer createdAt={row.createdAt} />
             </>
           ) : (
-            `${activityLabel}...`
+            "Working..."
           )}
         </span>
       </div>
