@@ -617,13 +617,6 @@ function mapHuggingFaceApiModel(
   };
 }
 
-async function fetchHuggingFaceModelDetail(modelId: string): Promise<HuggingFaceApiModel | null> {
-  const response = await fetch(huggingFaceModelApiUrl(modelId), {
-    headers: huggingFaceHeaders(process.env.HF_TOKEN),
-  });
-  if (!response.ok) return null;
-  return (await response.json()) as HuggingFaceApiModel;
-}
 
 function makeDownloadRecord(input: {
   readonly source: LocalModelHubSource;
@@ -708,22 +701,9 @@ export function makeLocalModelHub(input: {
         }
         const payload = (await response.json()) as unknown;
         const remoteModels = Array.isArray(payload)
-          ? (
-              await Promise.all(
-                payload.map(async (raw) => {
-                  const base = raw as HuggingFaceApiModel;
-                  const modelId =
-                    typeof base.id === "string"
-                      ? base.id
-                      : typeof base.modelId === "string"
-                        ? base.modelId
-                        : "";
-                  const detail =
-                    modelId.length > 0 ? await fetchHuggingFaceModelDetail(modelId) : null;
-                  return mapHuggingFaceApiModel(detail ?? base, paths, installedIds);
-                }),
-              )
-            ).filter((model): model is LocalModelHubModel => model !== null)
+          ? payload
+              .map((raw) => mapHuggingFaceApiModel(raw as HuggingFaceApiModel, paths, installedIds))
+              .filter((model): model is LocalModelHubModel => model !== null)
           : [];
         return {
           source: searchInput.source,
