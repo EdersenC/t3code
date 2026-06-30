@@ -10,7 +10,8 @@ were downloaded from Hugging Face.
 - Download model files by streaming Hub `resolve` URLs into
   `<model-root>/huggingface/<namespace>/<model>`.
 - Use the selected revision when a specific branch, tag, PR ref, or commit is selected.
-- Add include/exclude controls later for quantization/format-specific downloads.
+- Offer include/exclude download profiles for common artifact sets: whole repo, safetensors,
+  GGUF, 4-bit, 8-bit, and 16-bit/BF16-style files.
 - Use metadata-based preview later for size/changed-file estimates only; the product behavior remains
   direct in-app download after the user clicks Download.
 - Do not require the `hf` executable for normal downloads; it can be missing, non-executable, or
@@ -37,6 +38,24 @@ models/
 Repeat downloads should skip files that already match the metadata-reported size when that size is
 available.
 
+## Artifact Choice
+
+The right download depends on the next task:
+
+- **Whole repo** is safest for reproducibility and post-training because it preserves configs,
+  tokenizer files, templates, generation config, docs, and all published weight artifacts.
+- **Safetensors + configs/tokenizer** is usually enough for Transformers/vLLM inference and many
+  fine-tuning flows when the selected repo stores the trainable weights in safetensors.
+- **GGUF** is for llama.cpp-style inference. It is convenient and compact, but it is not the normal
+  starting point for continued pretraining or LoRA/QLoRA fine-tuning in Transformers.
+- **4-bit/8-bit quantized artifacts** are mainly for inference or quantization-aware workflows.
+  They are often not what you want if the goal is high-quality post-training.
+- **16-bit/BF16/FP16 artifacts** are the most useful weight precision for serious fine-tuning when
+  the hardware can handle them.
+
+Quant-specific downloads should still include tokenizer/config files. A weight shard by itself is
+rarely enough to load a model correctly.
+
 ## Metadata
 
 Normalize whatever the Hub exposes into the shared hub metadata shape:
@@ -46,6 +65,7 @@ Normalize whatever the Hub exposes into the shared hub metadata shape:
 - downloads, likes, last modified
 - file list and total size
 - quantization hints from file names/config where available
+- parameter count from safetensors metadata when available
 - architecture, parameter count, context hints, tokenizer/template files when available
 - gated/private/access status
 

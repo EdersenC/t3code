@@ -27,13 +27,23 @@ async function directoryHasFile(path) {
 
 const modelId = readArg("--model") ?? "sshleifer/tiny-gpt2";
 const root = readArg("--root") ?? NodePath.join(NodeOS.tmpdir(), "t3code-local-model-hub-smoke");
+const includePatterns =
+  readArg("--include")
+    ?.split(",")
+    .map((pattern) => pattern.trim())
+    .filter((pattern) => pattern.length > 0) ?? [];
 const targetPath = NodePath.join(root, "huggingface", ...modelId.split("/"));
 
-console.log(`Downloading ${modelId} into ${targetPath}`);
+console.log(
+  `Downloading ${modelId} into ${targetPath}${
+    includePatterns.length > 0 ? ` with include patterns ${includePatterns.join(", ")}` : ""
+  }`,
+);
 await NodeFSP.rm(targetPath, { recursive: true, force: true });
 await downloadHuggingFaceModelSnapshot({
   modelId,
   targetPath,
+  includePatterns,
   token: process.env.HF_TOKEN,
   onLog: (line) => console.log(line),
 });

@@ -76,6 +76,61 @@ const SEARCH_PRESETS: ReadonlyArray<{
 
 type ModelViewMode = "list" | "cards";
 
+const HUGGING_FACE_METADATA_PATTERNS = [
+  "*.json",
+  "*.model",
+  "*.txt",
+  "*.py",
+  "tokenizer*",
+  "vocab*",
+  "merges*",
+] as const;
+
+const DOWNLOAD_PROFILES: ReadonlyArray<{
+  readonly label: string;
+  readonly description: string;
+  readonly includePatterns: ReadonlyArray<string>;
+  readonly excludePatterns?: ReadonlyArray<string>;
+}> = [
+  { label: "Whole repo", description: "Everything", includePatterns: [] },
+  {
+    label: "Safetensors",
+    description: "Weights + configs",
+    includePatterns: ["*.safetensors", ...HUGGING_FACE_METADATA_PATTERNS],
+  },
+  { label: "GGUF", description: "llama.cpp", includePatterns: ["*.gguf", "*.json", "*.md"] },
+  {
+    label: "4-bit",
+    description: "small VRAM",
+    includePatterns: [
+      "*q4*",
+      "*Q4*",
+      "*int4*",
+      "*4bit*",
+      "*4-bit*",
+      "*nf4*",
+      ...HUGGING_FACE_METADATA_PATTERNS,
+    ],
+  },
+  {
+    label: "8-bit",
+    description: "balanced",
+    includePatterns: [
+      "*q8*",
+      "*Q8*",
+      "*int8*",
+      "*8bit*",
+      "*8-bit*",
+      ...HUGGING_FACE_METADATA_PATTERNS,
+    ],
+  },
+  {
+    label: "16-bit",
+    description: "training/full",
+    includePatterns: ["*fp16*", "*bf16*", "*float16*", ...HUGGING_FACE_METADATA_PATTERNS],
+  },
+];
+
 function formatBytes(value: number | undefined): string {
   if (value === undefined) return "Unknown";
   const units = ["B", "KB", "MB", "GB", "TB"] as const;
@@ -106,6 +161,7 @@ function modelBadges(model: LocalModelHubModel): ReadonlyArray<string> {
     model.format !== "unknown" ? model.format : null,
     model.metadata.parameterCount ?? null,
     model.metadata.quantization ?? null,
+    model.metadata.fileCount !== undefined ? `${model.metadata.fileCount} files` : null,
     ...model.metadata.tags.slice(0, 3),
   ].filter((item): item is string => Boolean(item && item.length > 0));
 }
@@ -134,7 +190,8 @@ function ModelSummary({ model }: { readonly model: LocalModelHubModel }) {
         </Badge>
       </div>
       <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>{formatBytes(model.sizeBytes)}</span>
+        <span>{formatBytes(model.metadata.totalSizeBytes ?? model.sizeBytes)}</span>
+        {model.metadata.parameterCount ? <span>{model.metadata.parameterCount} params</span> : null}
         {model.metadata.downloads !== undefined ? (
           <span>{model.metadata.downloads} downloads</span>
         ) : null}
@@ -225,6 +282,56 @@ function ModelCollection({
         />
       ))}
     </>
+  );
+}
+
+function ModelDownloadActions({
+  model,
+  onDownload,
+}: {
+  readonly model: LocalModelHubModel;
+  readonly onDownload: (
+    model: LocalModelHubModel,
+    options?: {
+      readonly includePatterns?: ReadonlyArray<string>;
+      readonly excludePatterns?: ReadonlyArray<string>;
+    },
+  ) => void;
+}) {
+  if (model.source === "ollama") {
+    return (
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={model.installed}
+        onClick={() => onDownload(model)}
+      >
+        <DownloadIcon className="size-3.5" />
+        Pull
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap justify-end gap-1.5">
+      {DOWNLOAD_PROFILES.map((profile) => (
+        <Button
+          key={profile.label}
+          size="xs"
+          variant={profile.label === "Whole repo" ? "outline" : "secondary"}
+          title={profile.description}
+          onClick={() =>
+            onDownload(model, {
+              includePatterns: profile.includePatterns,
+              ...(profile.excludePatterns ? { excludePatterns: profile.excludePatterns } : {}),
+            })
+          }
+        >
+          <DownloadIcon className="size-3.5" />
+          {profile.label}
+        </Button>
+      ))}
+    </div>
   );
 }
 
@@ -349,13 +456,21 @@ function LocalModelsPage() {
   );
 
   const handleDownload = useCallback(
-    async (model: LocalModelHubModel) => {
+    async (
+      model: LocalModelHubModel,
+      options?: {
+        readonly includePatterns?: ReadonlyArray<string>;
+        readonly excludePatterns?: ReadonlyArray<string>;
+      },
+    ) => {
       if (primaryEnvironmentId === null) return;
       const result = await startDownload({
         environmentId: primaryEnvironmentId,
         input: {
           source: model.source,
           modelId: model.modelId,
+          includePatterns: options?.includePatterns ?? [],
+          excludePatterns: options?.excludePatterns ?? [],
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -560,15 +675,12 @@ function LocalModelsPage() {
                       viewMode={modelViewMode}
                       empty={isSearching ? "Searching..." : "No search results"}
                       renderAction={(model) => (
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          disabled={model.installed}
-                          onClick={() => void handleDownload(model)}
-                        >
-                          <DownloadIcon className="size-3.5" />
-                          Download
-                        </Button>
+                        <ModelDownloadActions
+                          model={model}
+                          onDownload={(downloadModel, options) =>
+                            void handleDownload(downloadModel, options)
+                          }
+                        />
                       )}
                     />
                   </div>

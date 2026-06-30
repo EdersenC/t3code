@@ -59,6 +59,11 @@ export const LocalModelHubModelMetadata = Schema.Struct({
   quantization: Schema.optional(TrimmedString),
   architecture: Schema.optional(TrimmedString),
   contextLength: Schema.optional(NonNegativeInt),
+  fileCount: Schema.optional(NonNegativeInt),
+  totalSizeBytes: Schema.optional(NonNegativeInt),
+  recommendedDownloadPatterns: Schema.Array(TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   tags: Schema.Array(TrimmedString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   downloads: Schema.optional(NonNegativeInt),
   likes: Schema.optional(NonNegativeInt),
@@ -99,6 +104,8 @@ export const LocalModelHubDownloadInput = Schema.Struct({
   source: LocalModelHubSource,
   modelId: TrimmedNonEmptyString,
   revision: Schema.optional(TrimmedString),
+  includePatterns: Schema.Array(TrimmedString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  excludePatterns: Schema.Array(TrimmedString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type LocalModelHubDownloadInput = typeof LocalModelHubDownloadInput.Type;
 

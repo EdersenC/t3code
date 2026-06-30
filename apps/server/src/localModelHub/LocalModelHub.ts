@@ -178,7 +178,7 @@ async function listHuggingFaceModels(paths: HubPaths): Promise<ReadonlyArray<Loc
         localPath,
         installed: true,
         format: "unknown",
-        metadata: { tags: [] },
+        metadata: { tags: [], recommendedDownloadPatterns: [] },
       });
     }
   }
@@ -230,6 +230,7 @@ async function listOllamaModels(baseUrl: string): Promise<ReadonlyArray<LocalMod
         ...(typeof model.size === "number" ? { sizeBytes: model.size } : {}),
         metadata: {
           tags: modelId.includes(":cloud") || modelId.endsWith("-cloud") ? ["cloud"] : ["local"],
+          recommendedDownloadPatterns: [],
           ...(typeof model.details?.parameter_size === "string"
             ? { parameterCount: model.details.parameter_size }
             : {}),
@@ -281,11 +282,26 @@ interface HuggingFaceApiModel {
   readonly likes?: unknown;
   readonly lastModified?: unknown;
   readonly pipeline_tag?: unknown;
+  readonly usedStorage?: unknown;
+  readonly siblings?: unknown;
+  readonly safetensors?: unknown;
+  readonly config?: {
+    readonly architectures?: unknown;
+    readonly model_type?: unknown;
+    readonly quantization_config?: {
+      readonly bits?: unknown;
+      readonly quant_method?: unknown;
+    };
+  };
 }
 
 interface HuggingFaceModelFile {
   readonly rfilename?: unknown;
   readonly size?: unknown;
+}
+
+function isHuggingFaceModelFile(value: unknown): value is HuggingFaceModelFile {
+  return typeof value === "object" && value !== null;
 }
 
 interface HuggingFaceModelInfo {
@@ -296,6 +312,8 @@ interface HuggingFaceSnapshotDownloadInput {
   readonly modelId: string;
   readonly targetPath: string;
   readonly revision?: string | undefined;
+  readonly includePatterns?: ReadonlyArray<string> | undefined;
+  readonly excludePatterns?: ReadonlyArray<string> | undefined;
   readonly token?: string | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly onLog?: (line: string) => void;
@@ -358,6 +376,134 @@ function normalizeHuggingFaceFilename(filename: string): string {
     .join("/");
 }
 
+function wildcardPatternToRegExp(pattern: string): RegExp {
+  const escaped = pattern
+    .trim()
+    .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
+    .replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`, "i");
+}
+
+function matchesAnyPattern(filename: string, patterns: ReadonlyArray<string>): boolean {
+  return patterns.some((pattern) => wildcardPatternToRegExp(pattern).test(filename));
+}
+
+function filterHuggingFaceFiles(
+  files: ReadonlyArray<{ readonly filename: string; readonly size?: number | undefined }>,
+  input: {
+    readonly includePatterns?: ReadonlyArray<string> | undefined;
+    readonly excludePatterns?: ReadonlyArray<string> | undefined;
+  },
+): ReadonlyArray<{ readonly filename: string; readonly size?: number | undefined }> {
+  const includePatterns =
+    input.includePatterns?.filter((pattern) => pattern.trim().length > 0) ?? [];
+  const excludePatterns =
+    input.excludePatterns?.filter((pattern) => pattern.trim().length > 0) ?? [];
+  return files.filter((file) => {
+    if (includePatterns.length > 0 && !matchesAnyPattern(file.filename, includePatterns)) {
+      return false;
+    }
+    if (excludePatterns.length > 0 && matchesAnyPattern(file.filename, excludePatterns)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function formatParameterCount(value: number): string {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}B`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return String(value);
+}
+
+function parseSafetensorsMetadata(value: unknown): {
+  readonly parameterCount?: string | undefined;
+  readonly rawParameterCount?: number | undefined;
+} {
+  if (value === null || typeof value !== "object") return {};
+  const total = (value as { readonly total?: unknown }).total;
+  if (typeof total !== "number") return {};
+  return { parameterCount: formatParameterCount(total), rawParameterCount: total };
+}
+
+function inferFormatFromFilesAndTags(input: {
+  readonly files: ReadonlyArray<string>;
+  readonly lowerTags: ReadonlyArray<string>;
+}): LocalModelHubModel["format"] {
+  if (
+    input.lowerTags.some((tag) => tag.includes("gguf")) ||
+    input.files.some((file) => file.toLowerCase().endsWith(".gguf"))
+  ) {
+    return "gguf";
+  }
+  if (
+    input.lowerTags.some((tag) => tag.includes("safetensors")) ||
+    input.files.some((file) => file.toLowerCase().endsWith(".safetensors"))
+  ) {
+    return "safetensors";
+  }
+  return "unknown";
+}
+
+function inferQuantization(input: {
+  readonly lowerTags: ReadonlyArray<string>;
+  readonly filenames: ReadonlyArray<string>;
+  readonly config?: HuggingFaceApiModel["config"] | undefined;
+}): string | undefined {
+  const bits = input.config?.quantization_config?.bits;
+  const method = input.config?.quantization_config?.quant_method;
+  if (typeof bits === "number") {
+    return `${bits}-bit${typeof method === "string" ? ` ${method.toUpperCase()}` : ""}`;
+  }
+  const candidates = [...input.lowerTags, ...input.filenames.map((name) => name.toLowerCase())];
+  const quantPatterns: ReadonlyArray<readonly [RegExp, string]> = [
+    [/(?:^|[-_])q2(?:[-_]|$)|2-bit/, "2-bit"],
+    [/(?:^|[-_])q3(?:[-_]|$)|3-bit/, "3-bit"],
+    [/(?:^|[-_])q4(?:[-_]|$)|4-bit|int4|nf4/, "4-bit"],
+    [/(?:^|[-_])q5(?:[-_]|$)|5-bit/, "5-bit"],
+    [/(?:^|[-_])q6(?:[-_]|$)|6-bit/, "6-bit"],
+    [/(?:^|[-_])q8(?:[-_]|$)|8-bit|int8/, "8-bit"],
+    [/fp16|float16|16-bit|bf16/, "16-bit"],
+  ];
+  for (const [pattern, label] of quantPatterns) {
+    if (candidates.some((candidate) => pattern.test(candidate))) return label;
+  }
+  return undefined;
+}
+
+function recommendedDownloadPatterns(input: {
+  readonly files: ReadonlyArray<string>;
+  readonly lowerTags: ReadonlyArray<string>;
+}): ReadonlyArray<string> {
+  const patterns = new Set<string>();
+  if (
+    input.lowerTags.some((tag) => tag.includes("safetensors")) ||
+    input.files.some((file) => file.toLowerCase().endsWith(".safetensors"))
+  ) {
+    patterns.add("*.safetensors");
+  }
+  if (
+    input.lowerTags.some((tag) => tag.includes("gguf")) ||
+    input.files.some((file) => file.toLowerCase().endsWith(".gguf"))
+  ) {
+    patterns.add("*.gguf");
+  }
+  if (input.lowerTags.some((tag) => tag.includes("awq"))) patterns.add("*awq*");
+  if (input.lowerTags.some((tag) => tag.includes("gptq"))) patterns.add("*gptq*");
+  if (input.lowerTags.some((tag) => tag.includes("4-bit") || tag.includes("int4"))) {
+    patterns.add("*q4*");
+    patterns.add("*int4*");
+    patterns.add("*4-bit*");
+  }
+  if (input.lowerTags.some((tag) => tag.includes("8-bit") || tag.includes("int8"))) {
+    patterns.add("*q8*");
+    patterns.add("*int8*");
+    patterns.add("*8-bit*");
+  }
+  return [...patterns];
+}
+
 export async function downloadHuggingFaceModelSnapshot(
   input: HuggingFaceSnapshotDownloadInput,
 ): Promise<void> {
@@ -372,7 +518,7 @@ export async function downloadHuggingFaceModelSnapshot(
     );
   }
   const info = (await infoResponse.json()) as HuggingFaceModelInfo;
-  const files =
+  const allFiles =
     info.siblings
       ?.map((file) => ({
         filename: typeof file.rfilename === "string" ? file.rfilename : "",
@@ -380,10 +526,17 @@ export async function downloadHuggingFaceModelSnapshot(
       }))
       .filter((file) => file.filename.length > 0 && !file.filename.startsWith("."))
       .sort((left, right) => left.filename.localeCompare(right.filename)) ?? [];
+  const files = filterHuggingFaceFiles(allFiles, input);
   if (files.length === 0) {
-    throw new Error("Hugging Face model metadata did not include downloadable files.");
+    throw new Error(
+      allFiles.length === 0
+        ? "Hugging Face model metadata did not include downloadable files."
+        : "No Hugging Face files matched the selected download filters.",
+    );
   }
-  input.onLog?.(`Resolved ${files.length} file(s) for ${input.modelId}@${revision}.`);
+  input.onLog?.(
+    `Resolved ${files.length} of ${allFiles.length} file(s) for ${input.modelId}@${revision}.`,
+  );
   for (const file of files) {
     const relativePath = normalizeHuggingFaceFilename(file.filename);
     const targetFilePath = NodePath.resolve(input.targetPath, relativePath);
@@ -426,11 +579,20 @@ function mapHuggingFaceApiModel(
     ? raw.tags.filter((tag): tag is string => typeof tag === "string")
     : [];
   const lowerTags = tags.map((tag) => tag.toLowerCase());
-  const format = lowerTags.some((tag) => tag.includes("gguf"))
-    ? "gguf"
-    : lowerTags.some((tag) => tag.includes("safetensors"))
-      ? "safetensors"
-      : "unknown";
+  const files = Array.isArray(raw.siblings)
+    ? raw.siblings
+        .filter(isHuggingFaceModelFile)
+        .map((file) => (typeof file.rfilename === "string" ? file.rfilename : ""))
+        .filter((file): file is string => file.length > 0)
+    : [];
+  const format = inferFormatFromFilesAndTags({ files, lowerTags });
+  const safetensors = parseSafetensorsMetadata(raw.safetensors);
+  const quantization = inferQuantization({ lowerTags, filenames: files, config: raw.config });
+  const architecture = Array.isArray(raw.config?.architectures)
+    ? raw.config.architectures.find((value): value is string => typeof value === "string")
+    : typeof raw.config?.model_type === "string"
+      ? raw.config.model_type
+      : undefined;
   return {
     source: "huggingface",
     modelId,
@@ -438,14 +600,29 @@ function mapHuggingFaceApiModel(
     localPath: makeHuggingFaceTargetPath(paths, modelId),
     installed: installedIds.has(modelId),
     format,
+    ...(typeof raw.usedStorage === "number" ? { sizeBytes: raw.usedStorage } : {}),
     metadata: {
       tags,
+      ...(typeof raw.usedStorage === "number" ? { totalSizeBytes: raw.usedStorage } : {}),
+      ...(files.length > 0 ? { fileCount: files.length } : {}),
+      ...(safetensors.parameterCount ? { parameterCount: safetensors.parameterCount } : {}),
+      ...(quantization ? { quantization } : {}),
+      ...(architecture ? { architecture } : {}),
+      recommendedDownloadPatterns: recommendedDownloadPatterns({ files, lowerTags }),
       ...(typeof raw.downloads === "number" ? { downloads: raw.downloads } : {}),
       ...(typeof raw.likes === "number" ? { likes: raw.likes } : {}),
       ...(typeof raw.lastModified === "string" ? { updatedAt: raw.lastModified } : {}),
       ...(typeof raw.pipeline_tag === "string" ? { description: raw.pipeline_tag } : {}),
     },
   };
+}
+
+async function fetchHuggingFaceModelDetail(modelId: string): Promise<HuggingFaceApiModel | null> {
+  const response = await fetch(huggingFaceModelApiUrl(modelId), {
+    headers: huggingFaceHeaders(process.env.HF_TOKEN),
+  });
+  if (!response.ok) return null;
+  return (await response.json()) as HuggingFaceApiModel;
 }
 
 function makeDownloadRecord(input: {
@@ -531,9 +708,22 @@ export function makeLocalModelHub(input: {
         }
         const payload = (await response.json()) as unknown;
         const remoteModels = Array.isArray(payload)
-          ? payload
-              .map((raw) => mapHuggingFaceApiModel(raw as HuggingFaceApiModel, paths, installedIds))
-              .filter((model): model is LocalModelHubModel => model !== null)
+          ? (
+              await Promise.all(
+                payload.map(async (raw) => {
+                  const base = raw as HuggingFaceApiModel;
+                  const modelId =
+                    typeof base.id === "string"
+                      ? base.id
+                      : typeof base.modelId === "string"
+                        ? base.modelId
+                        : "";
+                  const detail =
+                    modelId.length > 0 ? await fetchHuggingFaceModelDetail(modelId) : null;
+                  return mapHuggingFaceApiModel(detail ?? base, paths, installedIds);
+                }),
+              )
+            ).filter((model): model is LocalModelHubModel => model !== null)
           : [];
         return {
           source: searchInput.source,
@@ -565,7 +755,7 @@ export function makeLocalModelHub(input: {
                   displayName: displayNameFromModelId(searchInput.query),
                   installed: false,
                   format: "ollama",
-                  metadata: { tags: [] },
+                  metadata: { tags: [], recommendedDownloadPatterns: [] },
                 },
               ];
         return {
@@ -581,17 +771,6 @@ export function makeLocalModelHub(input: {
     const targetPath = makeHuggingFaceTargetPath(paths, input.modelId);
     return Effect.tryPromise({
       try: async () => {
-        if (await directoryHasModelPayload(targetPath)) {
-          return {
-            download: makeDownloadRecord({
-              source: "huggingface",
-              modelId: input.modelId,
-              status: "completed",
-              targetPath,
-              detail: "Model is already present in the configured Hugging Face source folder.",
-            }),
-          };
-        }
         await NodeFSP.mkdir(targetPath, { recursive: true });
 
         const record = makeDownloadRecord({
@@ -613,6 +792,8 @@ export function makeLocalModelHub(input: {
               modelId: input.modelId,
               targetPath,
               revision: input.revision,
+              includePatterns: input.includePatterns,
+              excludePatterns: input.excludePatterns,
               token: process.env.HF_TOKEN,
               signal: abortController.signal,
               onLog: (line) => {

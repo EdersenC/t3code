@@ -132,6 +132,7 @@ Keep the persisted hub state source-neutral:
 - source model ID and revision/digest
 - local path
 - source metadata snapshot
+- file count, total artifact size, parameter count, and quantization hints when available
 - current download status
 - last error and raw provider detail
 
@@ -160,6 +161,8 @@ V1 recommendation:
 - Download files with direct Hub HTTP streaming into
   `<model-root>/huggingface/<namespace>/<model>`, because it works inside the app process and avoids
   `spawn hf` platform/path failures.
+- Support include/exclude download profiles so users can choose whole repos, safetensors, GGUF,
+  4-bit, 8-bit, or 16-bit/BF16-style artifacts.
 - Add dry-run/size preview later from metadata or a dedicated source adapter method, not as a
   user-facing confirmation gate.
 - Pass tokens through process environment (`HF_TOKEN`) or command option plumbing owned by the server
@@ -199,11 +202,12 @@ Downloads should be tracked by a server-side hub runtime instead of fire-and-for
 V1 process:
 
 1. Create a download record with source, model ID, target path, status, created time, and logs.
-2. If local inventory already proves the model is available, return `already_downloaded`.
-3. Start one source-adapter download task.
-4. Capture progress/log lines into the record.
-5. Mark `completed`, `failed`, or `cancelled`.
-6. Refresh local inventory for that source.
+2. Resolve the selected source/download profile into concrete files or a source-native pull request.
+3. Skip already-current files when the source can prove they match.
+4. Start one source-adapter download task.
+5. Capture progress/log lines into the record.
+6. Mark `completed`, `failed`, or `cancelled`.
+7. Refresh local inventory for that source.
 
 The first implementation can expose progress through refreshable snapshots. A follow-up can add a
 streaming subscription once the data model is stable.
@@ -223,6 +227,7 @@ High-value fields:
 - source and model ID
 - display name, description, tags, and license
 - local path and total disk usage
+- remote artifact size and file count
 - downloaded revision or digest
 - file list and quantization hints
 - context length and recommended max output tokens
