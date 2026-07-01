@@ -3,8 +3,10 @@ import { assert, it, describe } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 
 import { GitCommandError } from "@t3tools/contracts";
@@ -407,6 +409,10 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           "T3_TEST_SSH_ASKPASS_LOG",
         ] as const;
         const previousEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
+        const logMessages: Array<unknown> = [];
+        const logger = Logger.make<unknown, void>(({ message }) => {
+          logMessages.push(message);
+        });
 
         yield* fileSystem.writeFileString(
           sshWrapperPath,
@@ -435,7 +441,16 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           process.env.SSH_ASKPASS_REQUIRE = "force";
           process.env.T3_TEST_SSH_ASKPASS_LOG = sshLogPath;
 
-          yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+          yield* (yield* GitVcsDriver.GitVcsDriver)
+            .statusDetails(cwd)
+            .pipe(
+              Effect.provide(
+                Layer.mergeAll(
+                  Logger.layer([logger], { mergeWithExisting: false }),
+                  Layer.succeed(References.MinimumLogLevel, "All"),
+                ),
+              ),
+            );
 
           assert.deepEqual((yield* fileSystem.readFileString(sshLogPath)).trim().split(/\r?\n/), [
             "GCM_INTERACTIVE=never",
@@ -444,6 +459,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
             "SSH_ASKPASS=",
             "SSH_ASKPASS_REQUIRE=never",
           ]);
+          assert.deepEqual(logMessages, []);
         }).pipe(
           Effect.ensuring(
             Effect.sync(() => {

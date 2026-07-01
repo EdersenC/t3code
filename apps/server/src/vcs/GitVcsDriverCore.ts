@@ -1479,7 +1479,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         GitCommandError: (error) =>
           isMissingGitCwdError(error) ? Effect.void : Effect.fail(error),
       }),
-      Effect.ignoreCause({ log: true }),
+      Effect.ignoreCause,
     );
     return yield* readStatusDetailsLocal(cwd);
   });
@@ -1492,7 +1492,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             GitCommandError: (error) =>
               isMissingGitCwdError(error) ? Effect.void : Effect.fail(error),
           }),
-          Effect.ignoreCause({ log: true }),
+          Effect.ignoreCause,
         );
       }
       return yield* readStatusDetailsRemote(cwd);
