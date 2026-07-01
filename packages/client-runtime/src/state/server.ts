@@ -147,6 +147,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
     }),
+    localModelHubSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:local-model-hub-snapshot",
+      tag: WS_METHODS.localModelHubGetSnapshot,
+    }),
+    localModelHubSearch: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:local-model-hub-search",
+      tag: WS_METHODS.localModelHubSearch,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",
@@ -191,6 +199,18 @@ export function createServerEnvironmentAtoms<R, E>(
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
+    }),
+    localModelHubStartDownload: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:local-model-hub-start-download",
+      tag: WS_METHODS.localModelHubStartDownload,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    localModelHubCancelDownload: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:local-model-hub-cancel-download",
+      tag: WS_METHODS.localModelHubCancelDownload,
     }),
   };
 }

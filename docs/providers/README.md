@@ -5,6 +5,7 @@ linked to upstream docs so future agents can update provider behavior without re
 limits.
 
 - [Ollama](./ollama.md)
+- [Hugging Face](./huggingface.md)
 - [Groq](./groq.md)
 - [GLM and Z.ai](./glm.md)
 - [vLLM](./vllm.md)

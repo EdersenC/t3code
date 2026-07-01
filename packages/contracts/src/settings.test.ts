@@ -109,6 +109,37 @@ describe("ClientSettings personalization", () => {
 });
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
+  it("defaults the local model hub to the app-managed model root", () => {
+    expect(DEFAULT_SERVER_SETTINGS.localModelHub).toEqual({ modelRoot: "" });
+    expect(decodeServerSettings({}).localModelHub).toEqual({ modelRoot: "" });
+  });
+
+  it("accepts local model hub and Local provider patches", () => {
+    expect(
+      decodeServerSettingsPatch({
+        localModelHub: { modelRoot: "  ~/Models/t3  " },
+        providers: {
+          local: {
+            enabled: true,
+            baseUrl: " http://127.0.0.1:8018 ",
+            contextWindow: 8192,
+            outputTokenLimit: 512,
+          },
+        },
+      }),
+    ).toEqual({
+      localModelHub: { modelRoot: "~/Models/t3" },
+      providers: {
+        local: {
+          enabled: true,
+          baseUrl: "http://127.0.0.1:8018",
+          contextWindow: 8192,
+          outputTokenLimit: 512,
+        },
+      },
+    });
+  });
+
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});
   });

@@ -131,6 +131,15 @@ import {
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
+import {
+  LocalModelHubCancelDownloadInput,
+  LocalModelHubDownloadResult,
+  LocalModelHubDownloadInput,
+  LocalModelHubError,
+  LocalModelHubSearchInput,
+  LocalModelHubSearchResult,
+  LocalModelHubSnapshot,
+} from "./localModelHub.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
   SourceControlCloneRepositoryInput,
@@ -213,6 +222,12 @@ export const WS_METHODS = {
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
+
+  // Local model hub methods
+  localModelHubGetSnapshot: "localModelHub.getSnapshot",
+  localModelHubSearch: "localModelHub.search",
+  localModelHubStartDownload: "localModelHub.startDownload",
+  localModelHubCancelDownload: "localModelHub.cancelDownload",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -315,6 +330,30 @@ export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess,
   payload: ServerSignalProcessInput,
   success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsLocalModelHubGetSnapshotRpc = Rpc.make(WS_METHODS.localModelHubGetSnapshot, {
+  payload: Schema.Struct({}),
+  success: LocalModelHubSnapshot,
+  error: Schema.Union([LocalModelHubError, EnvironmentAuthorizationError]),
+});
+
+export const WsLocalModelHubSearchRpc = Rpc.make(WS_METHODS.localModelHubSearch, {
+  payload: LocalModelHubSearchInput,
+  success: LocalModelHubSearchResult,
+  error: Schema.Union([LocalModelHubError, EnvironmentAuthorizationError]),
+});
+
+export const WsLocalModelHubStartDownloadRpc = Rpc.make(WS_METHODS.localModelHubStartDownload, {
+  payload: LocalModelHubDownloadInput,
+  success: LocalModelHubDownloadResult,
+  error: Schema.Union([LocalModelHubError, EnvironmentAuthorizationError]),
+});
+
+export const WsLocalModelHubCancelDownloadRpc = Rpc.make(WS_METHODS.localModelHubCancelDownload, {
+  payload: LocalModelHubCancelDownloadInput,
+  success: LocalModelHubDownloadResult,
+  error: Schema.Union([LocalModelHubError, EnvironmentAuthorizationError]),
 });
 
 export const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
@@ -703,6 +742,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerSignalProcessRpc,
+  WsLocalModelHubGetSnapshotRpc,
+  WsLocalModelHubSearchRpc,
+  WsLocalModelHubStartDownloadRpc,
+  WsLocalModelHubCancelDownloadRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,

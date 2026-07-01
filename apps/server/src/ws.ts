@@ -113,9 +113,26 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import * as LocalModelHub from "./localModelHub/LocalModelHub.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+
+const localModelHubBySettingsService = new WeakMap<
+  ServerSettings.ServerSettingsService["Service"],
+  LocalModelHub.LocalModelHubService
+>();
+
+function getLocalModelHub(input: {
+  readonly config: ServerConfig.ServerConfig["Service"];
+  readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
+}): LocalModelHub.LocalModelHubService {
+  const existing = localModelHubBySettingsService.get(input.serverSettings);
+  if (existing) return existing;
+  const hub = LocalModelHub.makeLocalModelHub(input);
+  localModelHubBySettingsService.set(input.serverSettings, hub);
+  return hub;
+}
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -298,6 +315,10 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
+  [WS_METHODS.localModelHubGetSnapshot, AuthOrchestrationReadScope],
+  [WS_METHODS.localModelHubSearch, AuthOrchestrationReadScope],
+  [WS_METHODS.localModelHubStartDownload, AuthOrchestrationOperateScope],
+  [WS_METHODS.localModelHubCancelDownload, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
@@ -438,6 +459,7 @@ const makeWsRpcLayer = (
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
+      const localModelHub = getLocalModelHub({ config, serverSettings });
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1299,6 +1321,32 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.localModelHubGetSnapshot]: (_input) =>
+          observeRpcEffect(WS_METHODS.localModelHubGetSnapshot, localModelHub.snapshot, {
+            "rpc.aggregate": "local-model-hub",
+          }),
+        [WS_METHODS.localModelHubSearch]: (input) =>
+          observeRpcEffect(WS_METHODS.localModelHubSearch, localModelHub.search(input), {
+            "rpc.aggregate": "local-model-hub",
+            "local_model_hub.source": input.source,
+          }),
+        [WS_METHODS.localModelHubStartDownload]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.localModelHubStartDownload,
+            localModelHub.startDownload(input),
+            {
+              "rpc.aggregate": "local-model-hub",
+              "local_model_hub.source": input.source,
+            },
+          ),
+        [WS_METHODS.localModelHubCancelDownload]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.localModelHubCancelDownload,
+            localModelHub.cancelDownload(input),
+            {
+              "rpc.aggregate": "local-model-hub",
+            },
+          ),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
             "rpc.aggregate": "cloud",
