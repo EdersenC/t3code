@@ -56,7 +56,7 @@ function workEntryRawCommand(
 }
 
 function normalizeDetailText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
+  return value.replace(/\r\n/g, "\n").trim();
 }
 
 function pushUniqueSection(
@@ -67,7 +67,17 @@ function pushUniqueSection(
     return;
   }
   const normalized = normalizeDetailText(section.text);
-  if (sections.some((entry) => normalizeDetailText(entry.text) === normalized)) {
+  if (
+    sections.some((entry) =>
+      entry.id === section.id ? normalizeDetailText(entry.text) === normalized : false,
+    )
+  ) {
+    return;
+  }
+  if (
+    section.id === "output" &&
+    sections.some((entry) => entry.id === "command" && normalizeDetailText(entry.text) === normalized)
+  ) {
     return;
   }
   sections.push(section);
