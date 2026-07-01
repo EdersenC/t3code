@@ -1,4 +1,5 @@
 import type {
+  AgentThreadMetadata,
   OrchestrationCommand,
   OrchestrationProject,
   OrchestrationReadModel,
@@ -9,6 +10,11 @@ import type {
 import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+import {
+  DEFAULT_AGENT_GRAPH_LIMITS,
+  agentMetadataForThread,
+  isActiveAgentSession,
+} from "./agentGraph.ts";
 
 function invariantError(commandType: string, detail: string): OrchestrationCommandInvariantError {
   return new OrchestrationCommandInvariantError({
@@ -36,6 +42,159 @@ export function listThreadsByProjectId(
   projectId: ProjectId,
 ): ReadonlyArray<OrchestrationThread> {
   return readModel.threads.filter((thread) => thread.projectId === projectId);
+}
+
+export function validateThreadCreateAgentMetadata(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: Extract<OrchestrationCommand, { type: "thread.create" }>;
+}): Effect.Effect<AgentThreadMetadata, OrchestrationCommandInvariantError> {
+  const { command, readModel } = input;
+  const requested = command.agentMetadata;
+
+  if (requested?.parentThreadId === undefined) {
+    return Effect.succeed({
+      threadId: command.threadId,
+      projectId: command.projectId,
+      rootThreadId: command.threadId,
+      agentRole: "root",
+      agentKind: "root",
+      ...(requested?.displayName !== undefined ? { displayName: requested.displayName } : {}),
+      depth: 0,
+      ...(requested?.spawnedByTurnId !== undefined
+        ? { spawnedByTurnId: requested.spawnedByTurnId }
+        : {}),
+      ...(requested?.spawnedByToolCallId !== undefined
+        ? { spawnedByToolCallId: requested.spawnedByToolCallId }
+        : {}),
+      ...(requested?.spawnGroupId !== undefined ? { spawnGroupId: requested.spawnGroupId } : {}),
+      createdAt: command.createdAt,
+    });
+  }
+
+  if (requested.rootThreadId === undefined) {
+    return Effect.fail(
+      invariantError(command.type, "Child agent threads must include rootThreadId."),
+    );
+  }
+  if (requested.agentKind === undefined || requested.agentKind === "root") {
+    return Effect.fail(
+      invariantError(command.type, "Child agent threads must include a non-root agentKind."),
+    );
+  }
+  if (requested.agentRole !== undefined && requested.agentRole !== "subagent") {
+    return Effect.fail(
+      invariantError(command.type, "Child agent threads must use agentRole=subagent."),
+    );
+  }
+  if (requested.parentThreadId === command.threadId) {
+    return Effect.fail(invariantError(command.type, "Child agent thread cannot parent itself."));
+  }
+
+  const parentThread = findThreadById(readModel, requested.parentThreadId);
+  if (!parentThread || parentThread.deletedAt !== null) {
+    return Effect.fail(
+      invariantError(
+        command.type,
+        `Parent thread '${requested.parentThreadId}' does not exist for child agent '${command.threadId}'.`,
+      ),
+    );
+  }
+  if (parentThread.projectId !== command.projectId) {
+    return Effect.fail(
+      invariantError(command.type, "Child agent thread must belong to the same project as parent."),
+    );
+  }
+
+  const rootThread = findThreadById(readModel, requested.rootThreadId);
+  if (!rootThread || rootThread.deletedAt !== null) {
+    return Effect.fail(
+      invariantError(
+        command.type,
+        `Root thread '${requested.rootThreadId}' does not exist for child agent '${command.threadId}'.`,
+      ),
+    );
+  }
+  if (rootThread.projectId !== command.projectId) {
+    return Effect.fail(
+      invariantError(command.type, "Child agent thread must belong to the same project as root."),
+    );
+  }
+
+  const rootMetadata = agentMetadataForThread(rootThread);
+  if (
+    rootMetadata.rootThreadId !== requested.rootThreadId ||
+    rootMetadata.parentThreadId !== undefined
+  ) {
+    return Effect.fail(
+      invariantError(command.type, "rootThreadId must point to the root session thread."),
+    );
+  }
+
+  const parentMetadata = agentMetadataForThread(parentThread);
+  if (parentMetadata.rootThreadId !== requested.rootThreadId) {
+    return Effect.fail(
+      invariantError(command.type, "Parent agent must belong to the requested root session."),
+    );
+  }
+
+  const depth = parentMetadata.depth + 1;
+  if (depth > DEFAULT_AGENT_GRAPH_LIMITS.maxDepth) {
+    return Effect.fail(
+      invariantError(
+        command.type,
+        `Agent graph depth ${depth} exceeds max depth ${DEFAULT_AGENT_GRAPH_LIMITS.maxDepth}.`,
+      ),
+    );
+  }
+
+  const directChildCount = readModel.threads.filter((thread) => {
+    const metadata = agentMetadataForThread(thread);
+    return metadata.parentThreadId === requested.parentThreadId && thread.deletedAt === null;
+  }).length;
+  if (directChildCount >= DEFAULT_AGENT_GRAPH_LIMITS.maxChildrenPerParent) {
+    return Effect.fail(
+      invariantError(
+        command.type,
+        `Parent thread '${requested.parentThreadId}' already has ${directChildCount} child agents.`,
+      ),
+    );
+  }
+
+  const activeAgentCount = readModel.threads.filter((thread) => {
+    const metadata = agentMetadataForThread(thread);
+    return (
+      metadata.rootThreadId === requested.rootThreadId &&
+      thread.deletedAt === null &&
+      isActiveAgentSession(thread.session)
+    );
+  }).length;
+  if (activeAgentCount >= DEFAULT_AGENT_GRAPH_LIMITS.maxActiveAgentsPerRoot) {
+    return Effect.fail(
+      invariantError(
+        command.type,
+        `Root thread '${requested.rootThreadId}' already has ${activeAgentCount} active agents.`,
+      ),
+    );
+  }
+
+  return Effect.succeed({
+    threadId: command.threadId,
+    projectId: command.projectId,
+    rootThreadId: requested.rootThreadId,
+    parentThreadId: requested.parentThreadId,
+    agentRole: "subagent",
+    agentKind: requested.agentKind,
+    ...(requested.displayName !== undefined ? { displayName: requested.displayName } : {}),
+    depth,
+    ...(requested.spawnedByTurnId !== undefined
+      ? { spawnedByTurnId: requested.spawnedByTurnId }
+      : {}),
+    ...(requested.spawnedByToolCallId !== undefined
+      ? { spawnedByToolCallId: requested.spawnedByToolCallId }
+      : {}),
+    ...(requested.spawnGroupId !== undefined ? { spawnGroupId: requested.spawnGroupId } : {}),
+    createdAt: command.createdAt,
+  });
 }
 
 export function requireProject(input: {

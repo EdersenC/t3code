@@ -209,6 +209,10 @@ describe("OrchestrationEngine", () => {
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getAgentTreeByRootThreadId: () => Effect.succeed(Option.none()),
+          getRootThreadForAgentThread: () => Effect.succeed(Option.none()),
+          listChildAgentThreads: () => Effect.succeed([]),
+          listProjectRootSessionAgentSummaries: () => Effect.succeed([]),
         }),
       ),
       Layer.provide(

@@ -7,6 +7,8 @@ import {
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
   OrchestrationCommand,
+  OrchestrationAgentTreeSnapshot,
+  OrchestrationAgentLifecycleControlInput,
   OrchestrationEvent,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
@@ -37,6 +39,12 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const decodeOrchestrationAgentTreeSnapshot = Schema.decodeUnknownEffect(
+  OrchestrationAgentTreeSnapshot,
+);
+const decodeOrchestrationAgentLifecycleControlInput = Schema.decodeUnknownEffect(
+  OrchestrationAgentLifecycleControlInput,
+);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
 
 function getOptionValue(
@@ -59,6 +67,79 @@ it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
     });
     assert.strictEqual(parsed.fromTurnCount, 1);
     assert.strictEqual(parsed.toTurnCount, 2);
+  }),
+);
+
+it.effect("decodes flattened agent tree snapshots", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationAgentTreeSnapshot({
+      rootThreadId: "thread-root",
+      projectId: "project-1",
+      updatedAt: "2026-01-01T00:00:03.000Z",
+      agents: [
+        {
+          threadId: "thread-root",
+          rootThreadId: "thread-root",
+          depth: 0,
+          displayName: "Root Agent",
+          agentKind: "root",
+          status: "running",
+          latestActivityAt: "2026-01-01T00:00:03.000Z",
+          childrenCount: 1,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          providerInstanceId: "codex",
+        },
+        {
+          threadId: "thread-child",
+          parentThreadId: "thread-root",
+          rootThreadId: "thread-root",
+          depth: 1,
+          displayName: "Review Agent",
+          agentKind: "review",
+          status: "complete",
+          latestActivityAt: "2026-01-01T00:00:02.000Z",
+          spawnedByTurnId: "turn-parent",
+          spawnedByToolCallId: "tool-call-1",
+          spawnGroupId: "spawn-group-1",
+          childrenCount: 0,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          trace: {
+            projectId: "project-1",
+            rootThreadId: "thread-root",
+            threadId: "thread-child",
+            parentThreadId: "thread-root",
+            agentKind: "review",
+            depth: 1,
+            turnId: "turn-parent",
+            spawnGroupId: "spawn-group-1",
+            toolCallId: "tool-call-1",
+            providerInstanceId: "codex",
+            correlationId: "cmd-spawn",
+            timestamp: "2026-01-01T00:00:01.000Z",
+          },
+        },
+      ],
+    });
+
+    assert.strictEqual(parsed.rootThreadId, "thread-root");
+    assert.strictEqual(parsed.agents[1]?.parentThreadId, "thread-root");
+    assert.strictEqual(parsed.agents[1]?.spawnedByToolCallId, "tool-call-1");
+    assert.strictEqual(parsed.agents[1]?.trace?.correlationId, "cmd-spawn");
+  }),
+);
+
+it.effect("decodes agent lifecycle control requests", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationAgentLifecycleControlInput({
+      threadId: "thread-child",
+      operation: "interrupt",
+      cascade: true,
+      createdAt: "2026-01-01T00:00:04.000Z",
+    });
+
+    assert.strictEqual(parsed.threadId, "thread-child");
+    assert.strictEqual(parsed.operation, "interrupt");
+    assert.strictEqual(parsed.cascade, true);
   }),
 );
 

@@ -9,8 +9,10 @@
 import type {
   CheckpointRef,
   OrchestrationCheckpointSummary,
+  OrchestrationAgentTree,
   OrchestrationProject,
   OrchestrationProjectShell,
+  OrchestrationProjectRootSessionAgentSummary,
   OrchestrationModelAnalyticsRollup,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
@@ -168,6 +170,37 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Read the projected recursive agent tree for a root session thread.
+   */
+  readonly getAgentTreeByRootThreadId: (
+    rootThreadId: ThreadId,
+  ) => Effect.Effect<Option.Option<OrchestrationAgentTree>, ProjectionRepositoryError>;
+
+  /**
+   * Resolve the root session thread for any agent conversation thread.
+   */
+  readonly getRootThreadForAgentThread: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Read direct child agent conversations for a parent agent thread.
+   */
+  readonly listChildAgentThreads: (
+    parentThreadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Read root session summaries and active/total agent counts for a project.
+   */
+  readonly listProjectRootSessionAgentSummaries: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<OrchestrationProjectRootSessionAgentSummary>,
+    ProjectionRepositoryError
+  >;
 }
 
 /**

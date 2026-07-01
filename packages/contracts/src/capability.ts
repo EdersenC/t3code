@@ -1,8 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { MessageId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { MessageId, ThreadId, TrimmedNonEmptyString, TurnId } from "./baseSchemas.ts";
+import { AgentKind } from "./orchestration.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ToolCallGroupMetadata, ToolCallGroupedResult, ToolCallId } from "./toolCallGroup.ts";
 
 export const T3CapabilityKind = Schema.Literals(["skill", "slash-command", "subagent", "tool"]);
 export type T3CapabilityKind = typeof T3CapabilityKind.Type;
@@ -87,10 +89,29 @@ export type T3CapabilityEventProvenance = typeof T3CapabilityEventProvenance.Typ
 export const T3SubagentType = Schema.Literals(["explore", "implement", "review"]);
 export type T3SubagentType = typeof T3SubagentType.Type;
 
-export const T3SubagentRunInput = Schema.Struct({
-  subagentType: T3SubagentType,
+export const T3SubagentSpec = Schema.Struct({
+  type: Schema.optional(T3SubagentType),
+  subagentType: Schema.optional(T3SubagentType),
+  agentKind: Schema.optional(AgentKind),
   prompt: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
+  displayName: Schema.optional(TrimmedNonEmptyString),
+  priority: Schema.optional(Schema.Number),
+});
+export type T3SubagentSpec = typeof T3SubagentSpec.Type;
+
+export const T3SubagentRunInput = Schema.Struct({
+  subagentType: Schema.optional(T3SubagentType),
+  prompt: Schema.optional(TrimmedNonEmptyString),
+  title: Schema.optional(TrimmedNonEmptyString),
+  agents: Schema.optional(Schema.Array(T3SubagentSpec)),
+  parentThreadId: Schema.optional(ThreadId),
+  rootThreadId: Schema.optional(ThreadId),
+  spawnGroupId: Schema.optional(TrimmedNonEmptyString),
+  parentTurnId: Schema.optional(TurnId),
+  spawnedByToolCallId: Schema.optional(TrimmedNonEmptyString),
+  toolCallId: Schema.optional(ToolCallId),
+  ...ToolCallGroupMetadata.fields,
 });
 export type T3SubagentRunInput = typeof T3SubagentRunInput.Type;
 
@@ -101,6 +122,8 @@ export const T3SubagentRunErrorCode = Schema.Literals([
   "read_model_unavailable",
   "registry_unavailable",
   "dispatch_failed",
+  "invalid_input",
+  "limit_exceeded",
 ]);
 export type T3SubagentRunErrorCode = typeof T3SubagentRunErrorCode.Type;
 
@@ -110,12 +133,29 @@ export const T3SubagentRunError = Schema.Struct({
 });
 export type T3SubagentRunError = typeof T3SubagentRunError.Type;
 
-export const T3SubagentRunResult = Schema.Struct({
+export const T3SubagentRunChildResult = Schema.Struct({
   status: Schema.Literal("started"),
   parentThreadId: ThreadId,
+  rootThreadId: ThreadId,
   childThreadId: ThreadId,
   childMessageId: MessageId,
   subagentType: T3SubagentType,
+  agentKind: AgentKind,
   title: TrimmedNonEmptyString,
+  queueKey: TrimmedNonEmptyString,
+});
+export type T3SubagentRunChildResult = typeof T3SubagentRunChildResult.Type;
+
+export const T3SubagentRunResult = Schema.Struct({
+  status: Schema.Literal("started"),
+  parentThreadId: ThreadId,
+  rootThreadId: ThreadId,
+  spawnGroupId: TrimmedNonEmptyString,
+  children: Schema.Array(T3SubagentRunChildResult),
+  childThreadId: Schema.optional(ThreadId),
+  childMessageId: Schema.optional(MessageId),
+  subagentType: Schema.optional(T3SubagentType),
+  title: TrimmedNonEmptyString,
+  groupedResult: Schema.optional(ToolCallGroupedResult),
 });
 export type T3SubagentRunResult = typeof T3SubagentRunResult.Type;

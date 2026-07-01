@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -38,6 +39,7 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeAgentTraceContext } from "../agentGraph.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
@@ -364,6 +366,92 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "tool.group.started": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "tool",
+          kind: "tool.group.started",
+          summary: event.payload.title ?? "Tool group started",
+          payload: {
+            groupId: event.payload.groupId,
+            policy: event.payload.policy,
+            expectedToolCallIds: event.payload.expectedToolCallIds,
+            expectedCount: event.payload.expectedCount,
+            ...(event.payload.trace !== undefined ? { trace: event.payload.trace } : {}),
+            ...(event.payload.title ? { title: event.payload.title } : {}),
+            ...(event.payload.timeoutMs !== undefined
+              ? { timeoutMs: event.payload.timeoutMs }
+              : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "tool.group.item.started":
+    case "tool.group.item.completed":
+    case "tool.group.item.failed": {
+      const terminal = event.type !== "tool.group.item.started";
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: terminal && event.payload.status !== "completed" ? "error" : "tool",
+          kind: event.type,
+          summary: `${event.payload.name} ${terminal ? event.payload.status : "started"}`,
+          payload: {
+            groupId: event.payload.groupId,
+            toolCallId: event.payload.toolCallId,
+            index: event.payload.index,
+            name: event.payload.name,
+            status: event.payload.status,
+            ...(event.payload.trace !== undefined ? { trace: event.payload.trace } : {}),
+            ...(event.payload.result !== undefined ? { result: event.payload.result } : {}),
+            ...(event.payload.error !== undefined ? { error: event.payload.error } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "tool.group.completed":
+    case "tool.group.failed":
+    case "tool.group.timed_out":
+    case "tool.group.cancelled": {
+      const failed = event.type !== "tool.group.completed";
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: failed ? "error" : "tool",
+          kind: event.type,
+          summary:
+            event.type === "tool.group.completed"
+              ? "Tool group completed"
+              : event.type === "tool.group.timed_out"
+                ? "Tool group timed out"
+                : event.type === "tool.group.cancelled"
+                  ? "Tool group cancelled"
+                  : "Tool group failed",
+          payload: {
+            groupId: event.payload.groupId,
+            policy: event.payload.policy,
+            ...(event.payload.trace !== undefined ? { trace: event.payload.trace } : {}),
+            ...(event.payload.result !== undefined ? { result: event.payload.result } : {}),
+            ...(event.payload.reason !== undefined
+              ? { reason: truncateDetail(event.payload.reason) }
+              : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "runtime.warning": {
       return [
         {
@@ -569,6 +657,19 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.toolCallId ? { toolCallId: event.payload.toolCallId } : {}),
+            ...(event.payload.toolCallGroupId
+              ? { toolCallGroupId: event.payload.toolCallGroupId }
+              : {}),
+            ...(event.payload.toolCallIndex !== undefined
+              ? { toolCallIndex: event.payload.toolCallIndex }
+              : {}),
+            ...(event.payload.toolCallGroupPolicy
+              ? { toolCallGroupPolicy: event.payload.toolCallGroupPolicy }
+              : {}),
+            ...(event.payload.expectedToolCallCount !== undefined
+              ? { expectedToolCallCount: event.payload.expectedToolCallCount }
+              : {}),
             ...(event.payload.capabilityId ? { capabilityId: event.payload.capabilityId } : {}),
             ...(event.payload.capabilityKind
               ? { capabilityKind: event.payload.capabilityKind }
@@ -602,6 +703,19 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.toolCallId ? { toolCallId: event.payload.toolCallId } : {}),
+            ...(event.payload.toolCallGroupId
+              ? { toolCallGroupId: event.payload.toolCallGroupId }
+              : {}),
+            ...(event.payload.toolCallIndex !== undefined
+              ? { toolCallIndex: event.payload.toolCallIndex }
+              : {}),
+            ...(event.payload.toolCallGroupPolicy
+              ? { toolCallGroupPolicy: event.payload.toolCallGroupPolicy }
+              : {}),
+            ...(event.payload.expectedToolCallCount !== undefined
+              ? { expectedToolCallCount: event.payload.expectedToolCallCount }
+              : {}),
             ...(event.payload.capabilityId ? { capabilityId: event.payload.capabilityId } : {}),
             ...(event.payload.capabilityKind
               ? { capabilityKind: event.payload.capabilityKind }
@@ -635,6 +749,19 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.toolCallId ? { toolCallId: event.payload.toolCallId } : {}),
+            ...(event.payload.toolCallGroupId
+              ? { toolCallGroupId: event.payload.toolCallGroupId }
+              : {}),
+            ...(event.payload.toolCallIndex !== undefined
+              ? { toolCallIndex: event.payload.toolCallIndex }
+              : {}),
+            ...(event.payload.toolCallGroupPolicy
+              ? { toolCallGroupPolicy: event.payload.toolCallGroupPolicy }
+              : {}),
+            ...(event.payload.expectedToolCallCount !== undefined
+              ? { expectedToolCallCount: event.payload.expectedToolCallCount }
+              : {}),
             ...(event.payload.capabilityId ? { capabilityId: event.payload.capabilityId } : {}),
             ...(event.payload.capabilityKind
               ? { capabilityKind: event.payload.capabilityKind }
@@ -1255,6 +1382,79 @@ const make = Effect.gen(function* () {
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
 
+      const appendSubagentLifecycleActivities = (status: {
+        readonly kind: string;
+        readonly tone: "info" | "tool" | "error";
+        readonly summary: string;
+        readonly state: "running" | "completed" | "failed" | "interrupted" | "cancelled";
+        readonly message?: string;
+      }) =>
+        Effect.gen(function* () {
+          const metadata = thread.agentMetadata;
+          if (metadata?.agentRole !== "subagent" || metadata.parentThreadId === undefined) {
+            return;
+          }
+          const trace = makeAgentTraceContext({
+            thread: {
+              ...thread,
+              messages: [],
+              proposedPlans: [],
+              activities: [],
+              checkpoints: [],
+              deletedAt: null,
+            },
+            timestamp: now,
+            correlationId: event.eventId,
+            turnId: eventTurnId ?? thread.latestTurn?.turnId ?? null,
+            providerInstanceId: event.providerInstanceId,
+          });
+          yield* Effect.forEach(
+            [metadata.parentThreadId, metadata.rootThreadId].filter(
+              (candidate, index, array) => array.indexOf(candidate) === index,
+            ),
+            (targetThreadId) =>
+              Effect.gen(function* () {
+                yield* orchestrationEngine.dispatch({
+                  type: "thread.activity.append",
+                  commandId: yield* providerCommandId(event, "subagent-lifecycle-activity"),
+                  threadId: targetThreadId,
+                  activity: {
+                    id: EventId.make(
+                      `provider:subagent:${status.state}:${thread.id}:${event.eventId}:${targetThreadId}`,
+                    ),
+                    tone: status.tone,
+                    kind: status.kind,
+                    summary: status.summary,
+                    payload: {
+                      capabilityId: "t3:tool:subagent",
+                      capabilityKind: "tool",
+                      capabilitySource: "t3",
+                      toolName: "t3_subagent",
+                      parentThreadId: metadata.parentThreadId,
+                      rootThreadId: metadata.rootThreadId,
+                      childThreadId: thread.id,
+                      childTitle: thread.title,
+                      agentKind: metadata.agentKind,
+                      ...(metadata.spawnGroupId !== undefined
+                        ? { spawnGroupId: metadata.spawnGroupId }
+                        : {}),
+                      status: status.state,
+                      ...(status.message !== undefined ? { message: status.message } : {}),
+                      ...(event.providerInstanceId !== undefined
+                        ? { providerInstanceId: event.providerInstanceId }
+                        : {}),
+                      trace,
+                    },
+                    turnId: eventTurnId ?? thread.latestTurn?.turnId ?? null,
+                    createdAt: now,
+                  },
+                  createdAt: now,
+                });
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+        });
+
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
       const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
@@ -1388,6 +1588,36 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+
+          if (event.type === "turn.started") {
+            yield* appendSubagentLifecycleActivities({
+              kind: "t3.subagent.status.changed",
+              tone: "info",
+              summary: `${thread.title} subagent running`,
+              state: "running",
+            });
+          } else if (event.type === "turn.completed") {
+            const state = normalizeRuntimeTurnState(event.payload.state);
+            yield* appendSubagentLifecycleActivities({
+              kind:
+                state === "failed"
+                  ? "t3.subagent.failed"
+                  : state === "interrupted" || state === "cancelled"
+                    ? "t3.subagent.interrupted"
+                    : "t3.subagent.completed",
+              tone: state === "failed" ? "error" : "tool",
+              summary:
+                state === "failed"
+                  ? `${thread.title} subagent failed`
+                  : state === "interrupted" || state === "cancelled"
+                    ? `${thread.title} subagent interrupted`
+                    : `${thread.title} subagent completed`,
+              state,
+              ...(event.payload.errorMessage !== undefined
+                ? { message: event.payload.errorMessage }
+                : {}),
+            });
+          }
         }
       }
 
@@ -1638,7 +1868,24 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+          yield* appendSubagentLifecycleActivities({
+            kind: "t3.subagent.failed",
+            tone: "error",
+            summary: `${thread.title} subagent failed`,
+            state: "failed",
+            message: runtimeErrorMessage,
+          });
         }
+      }
+
+      if (event.type === "turn.aborted") {
+        yield* appendSubagentLifecycleActivities({
+          kind: "t3.subagent.interrupted",
+          tone: "info",
+          summary: `${thread.title} subagent interrupted`,
+          state: "interrupted",
+          message: event.payload.reason,
+        });
       }
 
       if (event.type === "thread.metadata.updated" && event.payload.name) {

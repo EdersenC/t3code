@@ -16,6 +16,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -172,6 +173,37 @@ function makeMutableServerSettingsLayer(initial: ServerSettings = DEFAULT_SERVER
 function makeProjectionLayer(thread: OrchestrationThread | null) {
   return Layer.succeed(ProjectionSnapshotQuery, {
     getThreadDetailById: () => Effect.succeed(thread ? Option.some(thread) : Option.none()),
+    listChildAgentThreads: () => Effect.succeed([]),
+    getAgentTreeByRootThreadId: () =>
+      Effect.succeed(
+        thread
+          ? Option.some({
+              rootThreadId: thread.id,
+              projectId: thread.projectId,
+              root: {
+                threadId: thread.id,
+                projectId: thread.projectId,
+                title: thread.title,
+                agentMetadata: thread.agentMetadata ?? {
+                  threadId: thread.id,
+                  projectId: thread.projectId,
+                  rootThreadId: thread.id,
+                  agentRole: "root",
+                  agentKind: "root",
+                  depth: 0,
+                  createdAt: thread.createdAt,
+                },
+                session: thread.session,
+                latestTurn: thread.latestTurn,
+                archivedAt: thread.archivedAt,
+                deletedAt: thread.deletedAt,
+                children: [],
+              },
+              activeAgentCount: 0,
+              totalAgentCount: 1,
+            })
+          : Option.none(),
+      ),
   } as unknown as ProjectionSnapshotQueryShape);
 }
 
@@ -189,12 +221,15 @@ function makeEngineLayer(dispatched: Array<OrchestrationCommand>) {
   } satisfies OrchestrationEngineShape);
 }
 
-function makeSubagentProductionLayer(dispatched: Array<OrchestrationCommand>) {
+function makeSubagentProductionLayer(
+  dispatched: Array<OrchestrationCommand>,
+  thread: OrchestrationThread | null = parentThread,
+) {
   return McpHttpServer.T3SubagentToolkitRegistrationLive.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "mcp-subagent-test-" })),
     Layer.provideMerge(ServerSettingsService.layerTest({})),
-    Layer.provideMerge(makeProjectionLayer(parentThread)),
+    Layer.provideMerge(makeProjectionLayer(thread)),
     Layer.provideMerge(makeEngineLayer(dispatched)),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -354,37 +389,244 @@ it.effect("registers the T3 subagent toolkit with the production runtime", () =>
       expect(result.structuredContent).toMatchObject({
         status: "started",
         parentThreadId: threadId,
+        rootThreadId: threadId,
         subagentType: "review",
         title: "Review",
+        children: [
+          {
+            status: "started",
+            parentThreadId: threadId,
+            rootThreadId: threadId,
+            subagentType: "review",
+            agentKind: "review",
+            title: "Review",
+          },
+        ],
       });
       expect(dispatched.map((command) => command.type)).toEqual([
         "thread.create",
-        "thread.activity.append",
         "thread.turn.start",
+        "thread.activity.append",
       ]);
 
-      const activityCommand = dispatched[1] as Extract<
+      const createCommand = dispatched[0] as Extract<
+        OrchestrationCommand,
+        { type: "thread.create" }
+      >;
+      expect(createCommand.projectId).toBe(parentThread.projectId);
+      expect(createCommand.modelSelection).toEqual(parentThread.modelSelection);
+      expect(createCommand.agentMetadata).toMatchObject({
+        rootThreadId: threadId,
+        parentThreadId: threadId,
+        agentRole: "subagent",
+        agentKind: "review",
+        displayName: "Review",
+      });
+
+      const activityCommand = dispatched[2] as Extract<
         OrchestrationCommand,
         { type: "thread.activity.append" }
       >;
       expect(activityCommand.threadId).toBe(threadId);
-      expect(activityCommand.activity.kind).toBe("t3.subagent.started");
+      expect(activityCommand.activity.kind).toBe("t3.subagents.spawned");
       expect(activityCommand.activity.payload).toMatchObject({
-        capabilityId: "t3:subagent:review",
-        capabilityKind: "subagent",
+        capabilityId: "t3:tool:subagent",
+        capabilityKind: "tool",
         capabilitySource: "t3",
         harnessName: "T3 MCP",
         toolName: "t3_subagent",
-        subagentType: "review",
         parentThreadId: threadId,
+        rootThreadId: threadId,
+        children: [
+          {
+            title: "Review",
+            type: "review",
+            agentKind: "review",
+            status: "started",
+          },
+        ],
       });
 
-      const turnCommand = dispatched[2] as Extract<
+      const turnCommand = dispatched[1] as Extract<
         OrchestrationCommand,
         { type: "thread.turn.start" }
       >;
       expect(turnCommand.message.text).toContain("You are the T3 review subagent.");
       expect(turnCommand.message.text).toContain("Review the pending change.");
+    }),
+  ).pipe(Effect.provide(makeSubagentProductionLayer(dispatched)));
+});
+
+it.effect("fans out one T3 subagent tool call into multiple child sessions", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+
+      const result = yield* server
+        .callTool({
+          name: "t3_subagent",
+          arguments: {
+            spawnGroupId: "spawn-group-test",
+            agents: [
+              {
+                type: "explore",
+                title: "Research current auth flow",
+                prompt: "Inspect the auth code and summarize risks.",
+              },
+              {
+                type: "implement",
+                title: "Refactor agent graph contracts",
+                prompt: "Implement the graph contract layer.",
+              },
+              {
+                type: "review",
+                title: "Review migration plan",
+                prompt: "Review the contract migration for edge cases.",
+              },
+            ],
+          },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...invocation,
+            capabilities: new Set([McpInvocationContext.T3_SUBAGENT_MCP_CAPABILITY]),
+          }),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({
+        status: "started",
+        parentThreadId: threadId,
+        rootThreadId: threadId,
+        spawnGroupId: "spawn-group-test",
+        children: [
+          {
+            subagentType: "explore",
+            agentKind: "explore",
+            title: "Research current auth flow",
+          },
+          {
+            subagentType: "implement",
+            agentKind: "implement",
+            title: "Refactor agent graph contracts",
+          },
+          {
+            subagentType: "review",
+            agentKind: "review",
+            title: "Review migration plan",
+          },
+        ],
+      });
+
+      expect(dispatched.map((command) => command.type)).toEqual([
+        "thread.create",
+        "thread.turn.start",
+        "thread.create",
+        "thread.turn.start",
+        "thread.create",
+        "thread.turn.start",
+        "thread.activity.append",
+      ]);
+
+      const createCommands = dispatched.filter(
+        (command): command is Extract<OrchestrationCommand, { type: "thread.create" }> =>
+          command.type === "thread.create",
+      );
+      const turnCommands = dispatched.filter(
+        (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
+          command.type === "thread.turn.start",
+      );
+      expect(new Set(createCommands.map((command) => command.threadId)).size).toBe(3);
+      expect(new Set(turnCommands.map((command) => command.threadId)).size).toBe(3);
+      for (const command of createCommands) {
+        expect(command.projectId).toBe(parentThread.projectId);
+        expect(command.modelSelection).toEqual(parentThread.modelSelection);
+        expect(command.agentMetadata).toMatchObject({
+          rootThreadId: threadId,
+          parentThreadId: threadId,
+          agentRole: "subagent",
+          spawnGroupId: "spawn-group-test",
+        });
+      }
+
+      const activityCommand = dispatched[6] as Extract<
+        OrchestrationCommand,
+        { type: "thread.activity.append" }
+      >;
+      expect(activityCommand.activity.kind).toBe("t3.subagents.spawned");
+      expect(activityCommand.activity.payload).toMatchObject({
+        spawnGroupId: "spawn-group-test",
+        parentThreadId: threadId,
+        rootThreadId: threadId,
+        children: [
+          { title: "Research current auth flow", type: "explore", status: "started" },
+          { title: "Refactor agent graph contracts", type: "implement", status: "started" },
+          { title: "Review migration plan", type: "review", status: "started" },
+        ],
+      });
+    }),
+  ).pipe(Effect.provide(makeSubagentProductionLayer(dispatched)));
+});
+
+it.effect("buffers grouped T3 subagent MCP results until every grouped call is terminal", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const call = (toolCallId: string, toolCallIndex: number, prompt: string) =>
+        server
+          .callTool({
+            name: "t3_subagent",
+            arguments: {
+              subagentType: "review",
+              prompt,
+              parentTurnId,
+              toolCallGroupId: "tool-group-subagents",
+              toolCallId,
+              toolCallIndex,
+              toolCallGroupPolicy: "barrier",
+              expectedToolCallCount: 2,
+            },
+          })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, {
+              ...invocation,
+              capabilities: new Set([McpInvocationContext.T3_SUBAGENT_MCP_CAPABILITY]),
+            }),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+
+      const firstFiber = yield* call("tool-a", 0, "Review the first thing.").pipe(
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      const second = yield* call("tool-b", 1, "Review the second thing.");
+      const first = yield* Fiber.join(firstFiber);
+
+      expect(first.isError).toBe(false);
+      expect(second.isError).toBe(false);
+      expect(first.structuredContent).toMatchObject({
+        groupedResult: {
+          groupId: "tool-group-subagents",
+          results: [
+            { toolCallId: "tool-a", toolName: "t3_subagent", status: "completed" },
+            { toolCallId: "tool-b", toolName: "t3_subagent", status: "completed" },
+          ],
+        },
+      });
+      expect(second.structuredContent).toMatchObject({
+        groupedResult: {
+          groupId: "tool-group-subagents",
+          results: [
+            { toolCallId: "tool-a", toolName: "t3_subagent", status: "completed" },
+            { toolCallId: "tool-b", toolName: "t3_subagent", status: "completed" },
+          ],
+        },
+      });
+      expect(dispatched.filter((command) => command.type === "thread.create")).toHaveLength(2);
     }),
   ).pipe(Effect.provide(makeSubagentProductionLayer(dispatched)));
 });
@@ -442,12 +684,13 @@ it.effect("serves T3 subagent calls through authenticated HTTP MCP", () => {
       expect(body.result?.structuredContent).toMatchObject({
         status: "started",
         parentThreadId: threadId,
+        rootThreadId: threadId,
         subagentType: "review",
       });
       expect(dispatched.map((command) => command.type)).toEqual([
         "thread.create",
-        "thread.activity.append",
         "thread.turn.start",
+        "thread.activity.append",
       ]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest));

@@ -128,6 +128,7 @@ import {
   useThreadPreviewState,
 } from "../previewStateStore";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
+import { AgentTreePanel } from "./AgentTreePanel";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
@@ -4874,6 +4875,12 @@ function ChatViewContent(props: ChatViewProps) {
       </Suspense>
     ) : null
   ) : null;
+  const activeAgentRootThreadId = activeThread.agentMetadata?.rootThreadId ?? activeThread.id;
+  const activeAgentDisplayName =
+    activeThread.agentMetadata?.displayName ??
+    (activeThread.agentMetadata?.agentKind === "root" || activeThread.id === activeAgentRootThreadId
+      ? "Root Agent"
+      : activeThread.title);
 
   return (
     <div
@@ -4933,6 +4940,13 @@ function ChatViewContent(props: ChatViewProps) {
           error={threadError}
           onDismiss={() => setThreadError(activeThread.id, null)}
         />
+        {isServerThread ? (
+          <AgentTreePanel
+            environmentId={activeThread.environmentId}
+            rootThreadId={activeAgentRootThreadId}
+            activeThreadId={activeThread.id}
+          />
+        ) : null}
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
@@ -5018,6 +5032,12 @@ function ChatViewContent(props: ChatViewProps) {
                   {shouldCenterFreshComposer && freshThreadPromptSuggestion ? (
                     <div className="mx-auto mb-4 max-w-2xl px-2 text-center text-balance font-medium text-foreground/80 text-sm sm:text-base">
                       {freshThreadPromptSuggestion}
+                    </div>
+                  ) : null}
+                  {isServerThread ? (
+                    <div className="mx-auto mb-1.5 max-w-216 px-2 text-muted-foreground text-xs">
+                      Message:{" "}
+                      <span className="font-medium text-foreground">{activeAgentDisplayName}</span>
                     </div>
                   ) : null}
                   <ComposerBannerStack className="relative z-0" items={composerBannerItems} />

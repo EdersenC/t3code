@@ -7,6 +7,8 @@
  * @module ProjectionThreadRepository
  */
 import {
+  AgentKind,
+  AgentRole,
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
@@ -32,6 +34,15 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  rootThreadId: ThreadId,
+  parentThreadId: Schema.NullOr(ThreadId),
+  agentRole: AgentRole,
+  agentKind: AgentKind,
+  agentDisplayName: Schema.NullOr(Schema.String),
+  agentDepth: NonNegativeInt,
+  spawnedByTurnId: Schema.NullOr(TurnId),
+  spawnedByToolCallId: Schema.NullOr(Schema.String),
+  spawnGroupId: Schema.NullOr(Schema.String),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
