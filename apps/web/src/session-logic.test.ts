@@ -1092,16 +1092,21 @@ describe("deriveWorkLogEntries", () => {
     );
   });
 
-  it("extracts command text from command detail when structured command metadata is missing", () => {
+  it("extracts command text from raw input when top-level command metadata is missing", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
-        id: "command-tool-windows-detail-fallback",
+        id: "command-tool-windows-raw-input",
         kind: "tool.completed",
         summary: "Ran command",
         payload: {
           itemType: "command_execution",
-          detail:
-            '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command \'rg -n -F "new Date()" .\' <exited with exit code 0>',
+          detail: "src/index.ts:12:new Date() <exited with exit code 0>",
+          data: {
+            rawInput: {
+              command:
+                '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command \'rg -n -F "new Date()" .\'',
+            },
+          },
         },
       }),
     ];
@@ -1111,6 +1116,50 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.rawCommand).toBe(
       `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command 'rg -n -F "new Date()" .'`,
     );
+  });
+
+  it("quotes raw input executable paths before unwrapping executable args commands", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-windows-raw-input-executable-args",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          detail: "src/index.ts:12:foo <exited with exit code 0>",
+          data: {
+            rawInput: {
+              executable: "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+              args: ["-NoLogo", "-NoProfile", "-Command", "rg -n foo ."],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe("rg -n foo .");
+    expect(entry?.rawCommand).toBe(
+      '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command "rg -n foo ."',
+    );
+  });
+
+  it("does not treat command output detail as the executed command", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-output-only",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          detail: "src/index.ts:12:new Date() <exited with exit code 0>",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBeUndefined();
+    expect(entry?.detail).toBe("src/index.ts:12:new Date()");
   });
 
   it("does not unwrap shell commands when no wrapper flag is present", () => {

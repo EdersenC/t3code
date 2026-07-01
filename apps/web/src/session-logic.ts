@@ -1079,6 +1079,20 @@ function normalizeCommandValue(value: unknown): string | null {
   return formatted ? unwrapKnownShellCommandWrapper(formatted) : null;
 }
 
+function normalizeExecutableArgsCommand(value: unknown): string | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const executable = asTrimmedString(record.executable);
+  if (!executable) {
+    return null;
+  }
+  const executablePart = formatCommandArrayPart(executable);
+  const args = normalizeCommandValue(record.args);
+  return args ? `${executablePart} ${args}` : null;
+}
+
 function toRawToolCommand(value: unknown, normalizedCommand: string | null): string | null {
   const formatted = formatCommandValue(value);
   if (!formatted || normalizedCommand === null) {
@@ -1095,14 +1109,23 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const itemInput = asRecord(item?.input);
-  const itemType = asTrimmedString(payload?.itemType);
-  const detail = asTrimmedString(payload?.detail);
+  const rawInput = asRecord(data?.rawInput);
+  const state = asRecord(data?.state);
+  const toolCall = asRecord(data?.toolCall);
+  const toolCallData = asRecord(toolCall?.data);
   const candidates: unknown[] = [
     item?.command,
     itemInput?.command,
     itemResult?.command,
     data?.command,
-    itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
+    rawInput?.command,
+    normalizeExecutableArgsCommand(rawInput),
+    state?.command,
+    state?.input,
+    toolCall?.command,
+    toolCallData?.command,
+    asRecord(toolCallData?.rawInput)?.command,
+    normalizeExecutableArgsCommand(toolCallData?.rawInput),
   ];
 
   for (const candidate of candidates) {

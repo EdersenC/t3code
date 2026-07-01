@@ -29,7 +29,6 @@ import {
   deriveTimelineEntries,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
-  workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
@@ -53,6 +52,7 @@ import {
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
+  PanelRightOpenIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -108,6 +108,14 @@ import {
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
 import { agentActivityWord } from "./activityPhrases";
+import {
+  buildWorkEntryExpandedBody,
+  buildWorkEntryDetailSections,
+  resolveWorkEntryStatus,
+  workEntryHeading,
+  workEntryPreview,
+  workEntryStatusLabel,
+} from "./workEntryPresentation";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -128,6 +136,7 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenActivityPanel: () => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
 }
@@ -162,6 +171,7 @@ interface MessagesTimelineProps {
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenActivityPanel: () => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
@@ -196,6 +206,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
   onOpenTurnDiff,
+  onOpenActivityPanel,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
@@ -362,6 +373,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenActivityPanel,
       onToggleTurnFold,
       onToggleWorkGroup,
     }),
@@ -376,6 +388,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenActivityPanel,
       onToggleTurnFold,
       onToggleWorkGroup,
     ],
@@ -1463,59 +1476,6 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   };
 }
 
-function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
-  workspaceRoot: string | undefined,
-) {
-  if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
-  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
-  const [firstPath] = workEntry.changedFiles ?? [];
-  if (!firstPath) return null;
-  const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
-  return workEntry.changedFiles!.length === 1
-    ? displayPath
-    : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
-}
-
-function workEntryRawCommand(
-  workEntry: Pick<TimelineWorkEntry, "command" | "rawCommand">,
-): string | null {
-  const rawCommand = workEntry.rawCommand?.trim();
-  if (!rawCommand || !workEntry.command) {
-    return null;
-  }
-  return rawCommand === workEntry.command.trim() ? null : rawCommand;
-}
-
-function buildToolCallExpandedBody(
-  workEntry: TimelineWorkEntry,
-  workspaceRoot: string | undefined,
-): string | null {
-  const blocks: string[] = [];
-  if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
-    blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
-  }
-  const raw = workEntryRawCommand(workEntry);
-  if (raw?.trim()) {
-    blocks.push(raw.trim());
-  } else if (workEntry.command?.trim()) {
-    blocks.push(workEntry.command.trim());
-  }
-  if (workEntry.detail?.trim()) {
-    blocks.push(workEntry.detail.trim());
-  }
-  const changedFiles = workEntry.changedFiles ?? [];
-  if (changedFiles.length > 0) {
-    blocks.push(
-      changedFiles
-        .map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot))
-        .join("\n"),
-    );
-  }
-  return blocks.length > 0 ? blocks.join("\n\n") : null;
-}
-
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (
     workEntry.sourceActivityKind === "user-input.requested" ||
@@ -1547,21 +1507,6 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   return workToneIcon(workEntry.tone).iconName;
 }
 
-function capitalizePhrase(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return value;
-  }
-  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
-}
-
-function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
-  if (!workEntry.toolTitle) {
-    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
-  }
-  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
-}
-
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
@@ -1569,6 +1514,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
   const isRuntimeDiagnostic =
     workEntry.sourceActivityKind === "runtime.error" ||
@@ -1577,7 +1523,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
-  const heading = toolWorkEntryHeading(workEntry);
+  const heading = workEntryHeading(workEntry);
   const rawPreview = workEntryPreview(workEntry, workspaceRoot);
   const preview =
     rawPreview &&
@@ -1586,8 +1532,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       ? null
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
-  const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null;
+  const expandedSections = buildWorkEntryDetailSections(workEntry, workspaceRoot);
+  const expandedBody = buildWorkEntryExpandedBody(workEntry, workspaceRoot);
+  const canExpand = expandedSections.length > 0 && expandedBody !== null;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -1608,10 +1555,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       ? "font-medium text-destructive"
       : "font-medium text-foreground/82";
   const turnSettled = !activity.activeTurnInProgress;
-  const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
-  const showSuccessIndicator =
-    workEntryIndicatesToolSuccess(workEntry) ||
-    (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
+  const status = resolveWorkEntryStatus(workEntry, turnSettled);
+  const showNeutralIndicator = status === "running" || status === "empty";
+  const showSuccessIndicator = status === "completed";
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,
@@ -1630,9 +1576,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   return (
     <div
       className={cn(
-        "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
+        "group/work-row flex flex-col rounded-lg border border-transparent px-1 py-1 transition-colors",
         canExpand &&
-          "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          "cursor-pointer hover:border-border/70 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
       {...rowToggleProps}
     >
@@ -1653,6 +1599,25 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="flex size-5 items-center justify-center rounded text-muted-foreground/55 opacity-0 transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 group-hover/work-row:opacity-100"
+                    aria-label="Open activity panel"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      ctx.onOpenActivityPanel();
+                    }}
+                    onKeyDown={stopRowToggle}
+                  >
+                    <PanelRightOpenIcon className="size-3.5" aria-hidden />
+                  </button>
+                }
+              />
+              <TooltipPopup>Open activity panel</TooltipPopup>
+            </Tooltip>
             <span
               className="flex size-4 shrink-0 items-center justify-center"
               aria-hidden={!canExpand}
@@ -1680,7 +1645,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                   >
                     <XIcon className="block size-3 shrink-0 text-destructive" aria-hidden />
                   </TooltipTrigger>
-                  <TooltipPopup>Failed</TooltipPopup>
+                  <TooltipPopup>{workEntryStatusLabel(status)}</TooltipPopup>
                 </Tooltip>
               ) : showSuccessIndicator ? (
                 <Tooltip>
@@ -1695,7 +1660,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                       />
                     </span>
                   </TooltipTrigger>
-                  <TooltipPopup>Completed</TooltipPopup>
+                  <TooltipPopup>{workEntryStatusLabel(status)}</TooltipPopup>
                 </Tooltip>
               ) : showNeutralIndicator ? (
                 <Tooltip>
@@ -1704,7 +1669,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                   >
                     <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
                   </TooltipTrigger>
-                  <TooltipPopup>Empty</TooltipPopup>
+                  <TooltipPopup>{workEntryStatusLabel(status)}</TooltipPopup>
                 </Tooltip>
               ) : null}
             </span>
@@ -1714,31 +1679,48 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       {expanded && canExpand && expandedBody ? (
         <div
           className={cn(
-            "mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5",
-            isRuntimeDiagnostic &&
-              "rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5 ps-2",
+            "mt-1.5 ms-7 cursor-default rounded-md border border-border/55 bg-muted/18",
+            isRuntimeDiagnostic && "border-destructive/20 bg-destructive/5",
           )}
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          {isRuntimeDiagnostic ? (
-            <div className="mb-1 flex justify-end">
-              <MessageCopyButton
-                text={expandedBody}
-                size="icon-xs"
-                variant="ghost"
-                className="h-5 w-5 text-destructive/70 hover:text-destructive"
-              />
+          <div className="flex h-7 items-center justify-between border-b border-border/45 px-2">
+            <span className="truncate text-[10px] font-medium uppercase text-muted-foreground/65">
+              Tool call details
+            </span>
+            <MessageCopyButton
+              text={expandedBody}
+              size="icon-xs"
+              variant="ghost"
+              className={cn(
+                "h-5 w-5 text-muted-foreground/70 hover:text-foreground",
+                isRuntimeDiagnostic && "text-destructive/70 hover:text-destructive",
+              )}
+            />
+          </div>
+          <div className="max-h-[min(22rem,45vh)] cursor-text overflow-auto px-2.5 py-2 select-text scrollbar-gutter-stable">
+            <div className="space-y-2">
+              {expandedSections.map((section) => (
+                <section
+                  key={`${workEntry.id}:${section.id}`}
+                  className="overflow-hidden rounded border border-border/45 bg-background/45"
+                >
+                  <div className="border-b border-border/40 bg-muted/20 px-2 py-1 text-[10px] font-medium uppercase text-muted-foreground/75">
+                    {section.label}
+                  </div>
+                  <pre
+                    className={cn(
+                      "whitespace-pre-wrap break-words px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground",
+                      isRuntimeDiagnostic && "text-destructive/90",
+                    )}
+                  >
+                    {section.text}
+                  </pre>
+                </section>
+              ))}
             </div>
-          ) : null}
-          <pre
-            className={cn(
-              "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text",
-              isRuntimeDiagnostic && "text-destructive/90",
-            )}
-          >
-            {expandedBody}
-          </pre>
+          </div>
         </div>
       ) : null}
     </div>
