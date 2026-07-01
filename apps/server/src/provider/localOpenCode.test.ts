@@ -22,6 +22,8 @@ const decodeJson = Schema.decodeUnknownSync(Schema.UnknownFromJsonString);
 
 type LocalOpenCodeConfig = {
   readonly model: string;
+  readonly skills?: { readonly paths: ReadonlyArray<string> };
+  readonly permission?: { readonly skill: Readonly<Record<string, "allow" | "deny">> };
   readonly provider: {
     readonly "local-vllm": {
       readonly npm: string;
@@ -93,6 +95,31 @@ describe("Local vLLM OpenCode config helpers", () => {
     expect(config.provider["local-vllm"].models["Qwen/Qwen3-8B-AWQ"]?.limit).toEqual({
       context: DEFAULT_LOCAL_CONTEXT_WINDOW,
       output: DEFAULT_LOCAL_OUTPUT_TOKEN_LIMIT,
+    });
+  });
+
+  it("adds shared T3 capability runtime config", () => {
+    const config = decodeJson(
+      buildLocalOpenCodeConfig({
+        settings: {
+          baseUrl: "http://localhost:8018/v1",
+          customModels: [DEFAULT_LOCAL_MODEL],
+        },
+        modelIds: ["Qwen/Qwen3-8B-AWQ"],
+        capabilityRuntime: {
+          skillPaths: ["/tmp/t3-skills"],
+          skillPermissions: {
+            "customize-opencode": "allow",
+            "legacy-hidden-skill": "deny",
+          },
+        },
+      }),
+    ) as LocalOpenCodeConfig;
+
+    expect(config.skills?.paths).toEqual(["/tmp/t3-skills"]);
+    expect(config.permission?.skill).toEqual({
+      "customize-opencode": "allow",
+      "legacy-hidden-skill": "deny",
     });
   });
 

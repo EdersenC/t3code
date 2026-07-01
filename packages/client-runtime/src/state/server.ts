@@ -46,6 +46,7 @@ export function applyServerConfigProjection(
         config: {
           ...projection.config,
           providers: event.payload.providers,
+          ...(event.payload.capabilities ? { capabilities: event.payload.capabilities } : {}),
         },
         latestEvent: event,
       }));
@@ -54,6 +55,7 @@ export function applyServerConfigProjection(
         config: {
           ...projection.config,
           settings: event.payload.settings,
+          ...(event.payload.capabilities ? { capabilities: event.payload.capabilities } : {}),
         },
         latestEvent: event,
       }));

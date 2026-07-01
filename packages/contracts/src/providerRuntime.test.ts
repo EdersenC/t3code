@@ -23,6 +23,37 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.providerInstanceId).toBe("ollama_local");
   });
 
+  it("decodes optional capability provenance on item lifecycle events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "item.started",
+      eventId: "event-capability-provenance",
+      provider: "opencode",
+      providerInstanceId: "opencode",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-1",
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "inProgress",
+        title: "Task",
+        capabilityId: "harness:opencode:subagent:task",
+        capabilityKind: "subagent",
+        capabilitySource: "harness-native",
+        providerInstanceId: "opencode",
+        harnessName: "OpenCode",
+      },
+    });
+
+    expect(parsed.type).toBe("item.started");
+    if (parsed.type !== "item.started") {
+      throw new Error("expected item.started");
+    }
+    expect(parsed.payload.capabilityKind).toBe("subagent");
+    expect(parsed.payload.capabilitySource).toBe("harness-native");
+    expect(parsed.payload.harnessName).toBe("OpenCode");
+  });
+
   it("decodes turn.plan.updated for plan rendering", () => {
     const parsed = decodeRuntimeEvent({
       type: "turn.plan.updated",

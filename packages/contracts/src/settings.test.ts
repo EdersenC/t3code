@@ -164,6 +164,44 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("ServerSettings.capabilityRegistry", () => {
+  it("defaults capability registry settings for legacy server configs", () => {
+    expect(DEFAULT_SERVER_SETTINGS.capabilityRegistry).toEqual({
+      skillRoots: [],
+      overrides: {},
+    });
+
+    expect(decodeServerSettings({}).capabilityRegistry).toEqual({
+      skillRoots: [],
+      overrides: {},
+    });
+  });
+
+  it("decodes skill roots and capability overrides from patches", () => {
+    const patch = decodeServerSettingsPatch({
+      capabilityRegistry: {
+        skillRoots: ["  .t3/skills  "],
+        overrides: {
+          "t3:subagent:review": {
+            enabled: false,
+            activation: "hidden",
+          },
+        },
+      },
+    });
+
+    expect(patch.capabilityRegistry).toEqual({
+      skillRoots: [".t3/skills"],
+      overrides: {
+        "t3:subagent:review": {
+          enabled: false,
+          activation: "hidden",
+        },
+      },
+    });
+  });
+});
+
 describe("ServerSettings worktree defaults", () => {
   it("defaults start-from-origin off for legacy configs", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(false);

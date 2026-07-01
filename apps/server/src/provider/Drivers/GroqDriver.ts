@@ -34,6 +34,7 @@ import {
   normalizeGroqModelId,
 } from "../groqOpenCode.ts";
 import { OpenCodeRuntime } from "../opencodeRuntime.ts";
+import { makeOpenCodeCapabilityRuntimeResolver } from "../opencodeCapabilityRuntimeResolver.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -120,6 +121,7 @@ function makeConfigContentEffect(
   settings: GroqSettings,
   environment: NodeJS.ProcessEnv,
   modelSelection?: ModelSelection,
+  capabilityRuntime?: Parameters<typeof buildGroqOpenCodeConfig>[0]["capabilityRuntime"],
 ) {
   return Effect.promise(() =>
     listGroqModels(settings, environment, { timeoutMs: GROQ_MODEL_DISCOVERY_TIMEOUT_MS }).catch(
@@ -134,7 +136,12 @@ function makeConfigContentEffect(
         ...settings.customModels.filter((model) => isGroqOpenCodeConfiguredModel(model)),
         DEFAULT_GROQ_MODEL,
       ];
-      return buildGroqOpenCodeConfig({ settings, modelIds, environment });
+      return buildGroqOpenCodeConfig({
+        settings,
+        modelIds,
+        environment,
+        ...(capabilityRuntime ? { capabilityRuntime } : {}),
+      });
     }),
   );
 }
@@ -153,6 +160,8 @@ export const GroqDriver: ProviderDriver<GroqSettings, GroqDriverEnv> = {
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
       const eventLoggers = yield* ProviderEventLoggers;
       const platform = yield* HostProcessPlatform;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -173,6 +182,13 @@ export const GroqDriver: ProviderDriver<GroqSettings, GroqDriverEnv> = {
         platform,
       );
       const openCodeSettings = makeHarnessSettings(effectiveConfig);
+      const resolveCapabilityRuntime = makeOpenCodeCapabilityRuntimeResolver({
+        serverConfig,
+        serverSettings,
+        instanceId,
+        fileSystem,
+        pathService,
+      });
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: runtimeEnvironment,
@@ -199,6 +215,7 @@ export const GroqDriver: ProviderDriver<GroqSettings, GroqDriverEnv> = {
         instanceId,
         environment: runtimeEnvironment,
         configContent,
+        capabilityRuntime: resolveCapabilityRuntime,
         describeErrorDetail: ({ detail, modelSelection, emptyOutput }) =>
           describeFailureDetail({ detail, modelSelection, emptyOutput }),
         splitInlineThinking: true,
@@ -211,7 +228,15 @@ export const GroqDriver: ProviderDriver<GroqSettings, GroqDriverEnv> = {
         runtimeEnvironment,
         {
           resolveConfigContent: ({ modelSelection }) =>
-            makeConfigContentEffect(effectiveConfig, runtimeEnvironment, modelSelection),
+            Effect.gen(function* () {
+              const capabilityRuntime = yield* resolveCapabilityRuntime();
+              return yield* makeConfigContentEffect(
+                effectiveConfig,
+                runtimeEnvironment,
+                modelSelection,
+                capabilityRuntime,
+              );
+            }),
           describeErrorDetail: ({ detail, modelSelection, emptyOutput }) =>
             describeFailureDetail({ detail, modelSelection, emptyOutput }),
         },

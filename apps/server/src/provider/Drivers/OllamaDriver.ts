@@ -30,6 +30,7 @@ import {
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { OpenCodeRuntime } from "../opencodeRuntime.ts";
+import { makeOpenCodeCapabilityRuntimeResolver } from "../opencodeCapabilityRuntimeResolver.ts";
 import { getOllamaModelMetadata, listOllamaModels } from "../ollamaApi.ts";
 import {
   buildOllamaOpenCodeConfig,
@@ -129,7 +130,11 @@ function modelIdForOllamaApi(settings: OllamaSettings, modelSelection?: ModelSel
   );
 }
 
-function makeConfigContentEffect(settings: OllamaSettings, modelSelection?: ModelSelection) {
+function makeConfigContentEffect(
+  settings: OllamaSettings,
+  modelSelection?: ModelSelection,
+  capabilityRuntime?: Parameters<typeof buildOllamaOpenCodeConfig>[0]["capabilityRuntime"],
+) {
   return Effect.promise(() =>
     listOllamaModels(settings, { timeoutMs: OLLAMA_MODEL_DISCOVERY_TIMEOUT_MS }).catch(
       () => [] as ReadonlyArray<string>,
@@ -142,7 +147,12 @@ function makeConfigContentEffect(settings: OllamaSettings, modelSelection?: Mode
         ...settings.customModels,
         DEFAULT_OLLAMA_MODEL,
       ]);
-      return buildOllamaOpenCodeConfig({ settings, modelIds, modelSelection });
+      return buildOllamaOpenCodeConfig({
+        settings,
+        modelIds,
+        modelSelection,
+        ...(capabilityRuntime ? { capabilityRuntime } : {}),
+      });
     }),
   );
 }
@@ -161,6 +171,8 @@ export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
       const eventLoggers = yield* ProviderEventLoggers;
       const platform = yield* HostProcessPlatform;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -214,6 +226,13 @@ export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
         platform,
       );
       const openCodeSettings = makeHarnessSettings(effectiveConfig);
+      const resolveCapabilityRuntime = makeOpenCodeCapabilityRuntimeResolver({
+        serverConfig,
+        serverSettings,
+        instanceId,
+        fileSystem,
+        pathService,
+      });
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: runtimeEnvironment,
@@ -229,6 +248,7 @@ export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
         instanceId,
         environment: runtimeEnvironment,
         configContent,
+        capabilityRuntime: resolveCapabilityRuntime,
         describeErrorDetail: ({ detail, modelSelection, emptyOutput }) =>
           describeFailureDetail({ detail, modelSelection, emptyOutput }),
         splitInlineThinking: true,
@@ -250,7 +270,14 @@ export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
         runtimeEnvironment,
         {
           resolveConfigContent: ({ modelSelection }) =>
-            makeConfigContentEffect(effectiveConfig, modelSelection),
+            Effect.gen(function* () {
+              const capabilityRuntime = yield* resolveCapabilityRuntime();
+              return yield* makeConfigContentEffect(
+                effectiveConfig,
+                modelSelection,
+                capabilityRuntime,
+              );
+            }),
           describeErrorDetail: ({ detail, modelSelection, emptyOutput }) =>
             describeFailureDetail({ detail, modelSelection, emptyOutput }),
         },

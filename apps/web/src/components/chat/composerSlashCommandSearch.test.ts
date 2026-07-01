@@ -33,7 +33,10 @@ describe("searchSlashCommandItems", () => {
         description: "Create distinctive, production-grade frontend interfaces",
       },
     ] satisfies Array<
-      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+      Extract<
+        ComposerCommandItem,
+        { type: "slash-command" | "provider-slash-command" | "capability-slash-command" }
+      >
     >;
 
     expect(searchSlashCommandItems(items, "ui").map((item) => item.id)).toEqual([
@@ -61,11 +64,54 @@ describe("searchSlashCommandItems", () => {
         description: "General GitHub help",
       },
     ] satisfies Array<
-      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+      Extract<
+        ComposerCommandItem,
+        { type: "slash-command" | "provider-slash-command" | "capability-slash-command" }
+      >
     >;
 
     expect(searchSlashCommandItems(items, "gfc").map((item) => item.id)).toEqual([
       "provider-slash-command:claudeAgent:gh-fix-ci",
+    ]);
+  });
+
+  it("searches T3 command capabilities by command name and description", () => {
+    const items = [
+      {
+        id: "slash:compact",
+        type: "slash-command",
+        command: "compact",
+        label: "/compact",
+        description: "Ask the provider to compact the conversation context",
+      },
+      {
+        id: "capability-slash-command:t3:command:tools",
+        type: "capability-slash-command",
+        capability: {
+          id: "t3:command:tools",
+          name: "tools",
+          kind: "slash-command",
+          activation: "command",
+          source: "t3",
+          enabled: true,
+          readonly: false,
+          commandName: "tools",
+          description: "Open the T3 subagent registry.",
+        },
+        commandName: "tools",
+        label: "/tools",
+        description: "Open the T3 subagent registry.",
+        sourceLabel: "T3",
+      },
+    ] satisfies Array<
+      Extract<
+        ComposerCommandItem,
+        { type: "slash-command" | "provider-slash-command" | "capability-slash-command" }
+      >
+    >;
+
+    expect(searchSlashCommandItems(items, "sub").map((item) => item.id)).toEqual([
+      "capability-slash-command:t3:command:tools",
     ]);
   });
 });

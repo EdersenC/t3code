@@ -7,11 +7,18 @@ import {
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 
 function scoreSlashCommandItem(
-  item: Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>,
+  item: Extract<
+    ComposerCommandItem,
+    { type: "slash-command" | "provider-slash-command" | "capability-slash-command" }
+  >,
   query: string,
 ): number | null {
   const primaryValue =
-    item.type === "slash-command" ? item.command.toLowerCase() : item.command.name.toLowerCase();
+    item.type === "slash-command"
+      ? item.command.toLowerCase()
+      : item.type === "capability-slash-command"
+        ? item.commandName.toLowerCase()
+        : item.command.name.toLowerCase();
   const description = item.description.toLowerCase();
 
   const scores = [
@@ -44,17 +51,28 @@ function scoreSlashCommandItem(
 
 export function searchSlashCommandItems(
   items: ReadonlyArray<
-    Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+    Extract<
+      ComposerCommandItem,
+      { type: "slash-command" | "provider-slash-command" | "capability-slash-command" }
+    >
   >,
   query: string,
-): Array<Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>> {
+): Array<
+  Extract<
+    ComposerCommandItem,
+    { type: "slash-command" | "provider-slash-command" | "capability-slash-command" }
+  >
+> {
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\/+/ });
   if (!normalizedQuery) {
     return [...items];
   }
 
   const ranked: Array<{
-    item: Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>;
+    item: Extract<
+      ComposerCommandItem,
+      { type: "slash-command" | "provider-slash-command" | "capability-slash-command" }
+    >;
     score: number;
     tieBreaker: string;
   }> = [];
@@ -73,7 +91,9 @@ export function searchSlashCommandItems(
         tieBreaker:
           item.type === "slash-command"
             ? `0\u0000${item.command}`
-            : `1\u0000${item.command.name}\u0000${item.provider}`,
+            : item.type === "capability-slash-command"
+              ? `1\u0000${item.commandName}`
+              : `2\u0000${item.command.name}\u0000${item.provider}`,
       },
       Number.POSITIVE_INFINITY,
     );

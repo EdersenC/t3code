@@ -7,7 +7,14 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview";
+export const T3_SUBAGENT_MCP_CAPABILITY = "t3:tool:subagent" as const;
+
+export type McpCapability = "preview" | typeof T3_SUBAGENT_MCP_CAPABILITY;
+
+export interface McpInvocationContextRequest {
+  readonly threadId: ThreadId;
+  readonly providerInstanceId: ProviderInstanceId;
+}
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;

@@ -3,6 +3,7 @@ import {
   type ProviderDriverKind,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
+  type T3CapabilitySnapshotEntry,
 } from "@t3tools/contracts";
 import { BotIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
@@ -43,6 +44,15 @@ export type ComposerCommandItem =
       command: ServerProviderSlashCommand;
       label: string;
       description: string;
+    }
+  | {
+      id: string;
+      type: "capability-slash-command";
+      capability: T3CapabilitySnapshotEntry;
+      commandName: string;
+      label: string;
+      description: string;
+      sourceLabel: string;
     }
   | {
       id: string;
@@ -91,11 +101,15 @@ function groupCommandItems(
   }
 
   const builtInItems = items.filter((item) => item.type === "slash-command");
+  const t3Items = items.filter((item) => item.type === "capability-slash-command");
   const providerItems = items.filter((item) => item.type === "provider-slash-command");
 
   const groups: ComposerCommandGroup[] = [];
   if (builtInItems.length > 0) {
     groups.push({ id: "built-in", label: "Built-in", items: builtInItems });
+  }
+  if (t3Items.length > 0) {
+    groups.push({ id: "t3", label: "T3", items: t3Items });
   }
   if (providerItems.length > 0) {
     groups.push({ id: "provider", label: "Provider", items: providerItems });
@@ -208,6 +222,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 }) {
   const skillSourceLabel =
     props.item.type === "skill" ? formatProviderSkillInstallSource(props.item.skill) : null;
+  const commandSourceLabel =
+    props.item.type === "capability-slash-command" ? props.item.sourceLabel : null;
 
   return (
     <CommandItem
@@ -242,6 +258,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           <SkillGlyph className="size-3.5" />
         </span>
       ) : null}
+      {props.item.type === "capability-slash-command" ? (
+        <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
+      ) : null}
       {props.item.type === "skill" ? (
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
           <SkillGlyph className="size-3.5" />
@@ -253,8 +272,10 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           {props.item.description}
         </span>
       </span>
-      {skillSourceLabel ? (
-        <span className="shrink-0 pl-2 text-muted-foreground/70 text-xs">{skillSourceLabel}</span>
+      {skillSourceLabel || commandSourceLabel ? (
+        <span className="shrink-0 pl-2 text-muted-foreground/70 text-xs">
+          {skillSourceLabel ?? commandSourceLabel}
+        </span>
       ) : null}
     </CommandItem>
   );

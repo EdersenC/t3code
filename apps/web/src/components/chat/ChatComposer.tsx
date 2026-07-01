@@ -9,6 +9,7 @@ import type {
   RuntimeMode,
   ScopedThreadRef,
   ServerProvider,
+  T3CapabilitySnapshot,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -77,6 +78,13 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
+import {
+  capabilityProviderKey,
+  capabilitySourceDescription,
+  effectiveComposerSkills,
+  providerCommandCapabilities,
+  t3CommandCapabilities,
+} from "../../capabilityComposer";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
@@ -490,6 +498,7 @@ export interface ChatComposerProps {
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
   providerStatuses: ServerProvider[];
+  capabilities: T3CapabilitySnapshot | null;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
 
@@ -514,6 +523,7 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
+  onOpenToolRegistry: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -584,6 +594,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     interactionMode,
     lockedProvider,
     providerStatuses,
+    capabilities,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
     activeThreadActivities,
@@ -599,6 +610,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContextsRef,
     composerElementContextsRef,
     onSend,
+    onOpenToolRegistry,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -794,6 +806,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
+  );
+  const effectiveSkills = useMemo(
+    () => effectiveComposerSkills({ capabilities, selectedProviderStatus }),
+    [capabilities, selectedProviderStatus],
   );
 
   const composerPromptInjectionState = useMemo(
@@ -1014,30 +1030,79 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: command.description ?? command.input?.hint ?? "Run provider command",
         }),
       );
+      const providerCommandNames = new Set(
+        providerSlashCommandItems.map((item) => item.command.name.toLowerCase()),
+      );
+      const providerCapabilityItems = providerCommandCapabilities({
+        capabilities,
+        selectedProviderStatus,
+      })
+        .filter((capability) => {
+          const commandName = capability.commandName ?? capability.name;
+          if (providerCommandNames.has(commandName.toLowerCase())) return false;
+          providerCommandNames.add(commandName.toLowerCase());
+          return true;
+        })
+        .map((capability) => {
+          const commandName = capability.commandName ?? capability.name;
+          return {
+            id: `capability-provider-slash-command:${capability.id}`,
+            type: "provider-slash-command" as const,
+            provider: capabilityProviderKey(selectedProvider, capability),
+            command: {
+              name: commandName,
+              ...(capability.description ? { description: capability.description } : {}),
+            },
+            label: `/${commandName}`,
+            description: capabilitySourceDescription(capability),
+          };
+        });
+      const t3CommandItems = t3CommandCapabilities({ capabilities }).map((capability) => {
+        const commandName = capability.commandName ?? capability.name;
+        return {
+          id: `capability-slash-command:${capability.id}`,
+          type: "capability-slash-command" as const,
+          capability,
+          commandName,
+          label: `/${commandName}`,
+          description: capabilitySourceDescription(capability),
+          sourceLabel: "T3",
+        };
+      });
       const query = composerTrigger.query.trim().toLowerCase();
-      const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
+      const slashCommandItems = [
+        ...builtInSlashCommandItems,
+        ...t3CommandItems,
+        ...providerSlashCommandItems,
+        ...providerCapabilityItems,
+      ];
       if (!query) {
         return slashCommandItems;
       }
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }),
-      );
+      return searchProviderSkills(effectiveSkills, composerTrigger.query).map((skill) => ({
+        id: `skill:${selectedProvider}:${skill.name}`,
+        type: "skill" as const,
+        provider: selectedProvider,
+        skill,
+        label: formatProviderSkillDisplayName(skill),
+        description:
+          skill.shortDescription ??
+          skill.description ??
+          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+      }));
     }
     return [];
-  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries.entries]);
+  }, [
+    capabilities,
+    composerTrigger,
+    effectiveSkills,
+    selectedProvider,
+    selectedProviderStatus,
+    workspaceEntries.entries,
+  ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1684,6 +1749,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
+      if (item.type === "capability-slash-command") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          focusEditorAfterReplace: false,
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          if (item.commandName === "tools") {
+            onOpenToolRegistry();
+          }
+        }
+        return;
+      }
       if (item.type === "skill") {
         const replacement = `$${item.skill.name} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -1707,6 +1785,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       applyPromptReplacement,
       clearCurrentComposerDraft,
       handleInteractionModeChange,
+      onOpenToolRegistry,
       resolveActiveComposerTrigger,
     ],
   );
@@ -2466,7 +2545,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ? composerTerminalContexts
                     : []
                 }
-                skills={selectedProviderStatus?.skills ?? []}
+                skills={effectiveSkills}
                 {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}

@@ -569,6 +569,17 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.capabilityId ? { capabilityId: event.payload.capabilityId } : {}),
+            ...(event.payload.capabilityKind
+              ? { capabilityKind: event.payload.capabilityKind }
+              : {}),
+            ...(event.payload.capabilitySource
+              ? { capabilitySource: event.payload.capabilitySource }
+              : {}),
+            ...(event.payload.providerInstanceId
+              ? { providerInstanceId: event.payload.providerInstanceId }
+              : {}),
+            ...(event.payload.harnessName ? { harnessName: event.payload.harnessName } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -591,6 +602,17 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.capabilityId ? { capabilityId: event.payload.capabilityId } : {}),
+            ...(event.payload.capabilityKind
+              ? { capabilityKind: event.payload.capabilityKind }
+              : {}),
+            ...(event.payload.capabilitySource
+              ? { capabilitySource: event.payload.capabilitySource }
+              : {}),
+            ...(event.payload.providerInstanceId
+              ? { providerInstanceId: event.payload.providerInstanceId }
+              : {}),
+            ...(event.payload.harnessName ? { harnessName: event.payload.harnessName } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -613,6 +635,17 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.capabilityId ? { capabilityId: event.payload.capabilityId } : {}),
+            ...(event.payload.capabilityKind
+              ? { capabilityKind: event.payload.capabilityKind }
+              : {}),
+            ...(event.payload.capabilitySource
+              ? { capabilitySource: event.payload.capabilitySource }
+              : {}),
+            ...(event.payload.providerInstanceId
+              ? { providerInstanceId: event.payload.providerInstanceId }
+              : {}),
+            ...(event.payload.harnessName ? { harnessName: event.payload.harnessName } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
