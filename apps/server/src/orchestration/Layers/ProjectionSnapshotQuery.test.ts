@@ -532,6 +532,25 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             '2026-04-06T00:00:05.000Z',
             '2026-04-06T00:00:06.000Z',
             NULL
+          ),
+          (
+            'subagent:child-1',
+            'project-archive-test',
+            'Anonymous Child Thread',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-04-06T00:00:08.000Z',
+            '2026-04-06T00:00:09.000Z',
+            NULL,
+            NULL
           )
       `;
 
@@ -559,6 +578,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+
+      const childDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("subagent:child-1"),
+      );
+      assert.equal(childDetail._tag, "Some");
     }),
   );
 

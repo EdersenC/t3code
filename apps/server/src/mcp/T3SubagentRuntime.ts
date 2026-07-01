@@ -3,11 +3,12 @@ import {
   CommandId,
   EventId,
   MessageId,
-  RuntimeMode,
+  type ModelSelection,
+  ProviderInstanceId,
+  type T3SubagentAgent,
   type T3SubagentRunError,
   type T3SubagentRunInput,
   type T3SubagentRunResult,
-  type T3SubagentType,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -30,41 +31,33 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { ServerSettingsService } from "../serverSettings.ts";
 
 const TOOL_CAPABILITY_ID = "t3:tool:subagent";
-const subagentCapabilityId = (type: T3SubagentType) => `t3:subagent:${type}`;
+
+const AGENT_MODEL_SELECTIONS: Readonly<Record<T3SubagentAgent, ModelSelection>> = {
+  "ollama-gpt-oss-120b-cloud": {
+    instanceId: ProviderInstanceId.make("ollama"),
+    model: "ollama/gpt-oss:120b-cloud",
+  },
+  "ollama-gpt-oss-20b-cloud": {
+    instanceId: ProviderInstanceId.make("ollama"),
+    model: "ollama/gpt-oss:20b-cloud",
+  },
+};
 
 const makeError = (code: T3SubagentRunError["code"], message: string): T3SubagentRunError => ({
   code,
   message,
 });
 
-const titleFor = (input: T3SubagentRunInput): string =>
-  input.title ?? `${input.subagentType[0]?.toUpperCase()}${input.subagentType.slice(1)}`;
-
-const runtimeModeFor = (type: T3SubagentType, parentRuntimeMode: RuntimeMode): RuntimeMode =>
-  type === "implement" ? parentRuntimeMode : "approval-required";
-
-const profileInstruction = (type: T3SubagentType): string => {
-  switch (type) {
-    case "explore":
-      return [
-        "You are the T3 explore subagent.",
-        "Inspect the codebase, gather evidence, and report findings without editing files.",
-      ].join("\n");
-    case "implement":
-      return [
-        "You are the T3 implement subagent.",
-        "Make a narrow code change, keep edits scoped, and report verification evidence.",
-      ].join("\n");
-    case "review":
-      return [
-        "You are the T3 review subagent.",
-        "Review for bugs, regressions, missing tests, and contract drift. Lead with findings.",
-      ].join("\n");
-  }
-};
+const titleFor = (input: T3SubagentRunInput): string => input.title ?? "Subagent";
 
 function buildPrompt(input: T3SubagentRunInput): string {
-  return [profileInstruction(input.subagentType), "", input.prompt].join("\n");
+  return input.prompt;
+}
+
+function previewText(text: string, limit = 180): string {
+  const trimmed = text.replace(/\s+/g, " ").trim();
+  if (trimmed.length <= limit) return trimmed;
+  return `${trimmed.slice(0, limit - 3)}...`;
 }
 
 function assertCapabilityEnabled(
@@ -140,7 +133,6 @@ const make = Effect.gen(function* () {
       ),
     );
     yield* assertCapabilityEnabled(registry, TOOL_CAPABILITY_ID);
-    yield* assertCapabilityEnabled(registry, subagentCapabilityId(input.subagentType));
 
     const parentThreadOption = yield* projection
       .getThreadDetailById(invocation.threadId)
@@ -158,9 +150,12 @@ const make = Effect.gen(function* () {
     const parentThread = parentThreadOption.value;
     const childThreadId = ThreadId.make(`subagent:${yield* randomUuid}`);
     const childMessageId = MessageId.make(`subagent-message:${yield* randomUuid}`);
+    const queueItemId = EventId.make(`t3:subagent:queue:${yield* randomUuid}`);
     const createdAt = DateTime.formatIso(yield* DateTime.now);
     const title = titleFor(input);
-    const runtimeMode = runtimeModeFor(input.subagentType, parentThread.runtimeMode);
+    const childModelSelection = input.agent
+      ? AGENT_MODEL_SELECTIONS[input.agent]
+      : parentThread.modelSelection;
 
     yield* dispatch({
       type: "thread.create",
@@ -168,8 +163,8 @@ const make = Effect.gen(function* () {
       threadId: childThreadId,
       projectId: parentThread.projectId,
       title,
-      modelSelection: parentThread.modelSelection,
-      runtimeMode,
+      modelSelection: childModelSelection,
+      runtimeMode: parentThread.runtimeMode,
       interactionMode: parentThread.interactionMode,
       branch: parentThread.branch,
       worktreePath: parentThread.worktreePath,
@@ -180,19 +175,26 @@ const make = Effect.gen(function* () {
       commandId: yield* nextCommandId("activity"),
       threadId: parentThread.id,
       activity: {
-        id: EventId.make(`mcp:subagent:started:${yield* randomUuid}`),
+        id: queueItemId,
         tone: "tool",
         kind: "t3.subagent.started",
         summary: `${title} subagent started`,
         payload: {
-          capabilityId: subagentCapabilityId(input.subagentType),
-          capabilityKind: "subagent",
+          queueItemId,
+          status: "started",
+          capabilityId: TOOL_CAPABILITY_ID,
+          capabilityKind: "tool",
           capabilitySource: "t3",
           harnessName: "T3 MCP",
           toolName: "t3_subagent",
-          subagentType: input.subagentType,
           parentThreadId: parentThread.id,
+          parentTurnId: parentThread.latestTurn?.turnId ?? null,
           childThreadId,
+          childMessageId,
+          title,
+          prompt: input.prompt,
+          promptPreview: previewText(input.prompt),
+          ...(input.agent ? { agent: input.agent } : {}),
         },
         turnId: parentThread.latestTurn?.turnId ?? null,
         createdAt,
@@ -209,20 +211,21 @@ const make = Effect.gen(function* () {
         text: buildPrompt(input),
         attachments: [],
       },
-      modelSelection: parentThread.modelSelection,
+      modelSelection: childModelSelection,
       titleSeed: title,
-      runtimeMode,
+      runtimeMode: parentThread.runtimeMode,
       interactionMode: parentThread.interactionMode,
       createdAt,
     });
 
     return {
       status: "started",
+      queueItemId,
       parentThreadId: parentThread.id,
       childThreadId,
       childMessageId,
-      subagentType: input.subagentType,
       title,
+      ...(input.agent ? { agent: input.agent } : {}),
     };
   });
 

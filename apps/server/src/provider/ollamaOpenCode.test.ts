@@ -74,6 +74,25 @@ describe("Ollama OpenCode config helpers", () => {
     expect(Object.keys(config.provider.ollama.models)).toEqual(["qwen2.5-coder:7b", "llama3.2:3b"]);
   });
 
+  it("preserves Ollama Cloud colon tags in generated provider config", () => {
+    const config = decodeJson(
+      buildOllamaOpenCodeConfig({
+        settings: {
+          baseUrl: "http://localhost:11434/v1",
+          customModels: [],
+        },
+        modelIds: ["gpt-oss:20b-cloud"],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("ollama"),
+          model: "ollama/gpt-oss:20b-cloud",
+        },
+      }),
+    ) as OllamaOpenCodeConfig;
+
+    expect(config.model).toBe("ollama/gpt-oss:20b-cloud");
+    expect(Object.keys(config.provider.ollama.models)).toEqual(["gpt-oss:20b-cloud"]);
+  });
+
   it("adds shared T3 capability runtime config", () => {
     const config = decodeJson(
       buildOllamaOpenCodeConfig({

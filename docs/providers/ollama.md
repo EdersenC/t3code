@@ -25,9 +25,9 @@ provider-account gating. They still need operational guardrails:
 
 ## Cloud Models
 
-Ollama Cloud models are exposed with cloud-flavored IDs such as `gpt-oss:cloud` or
-`gpt-oss-120b-cloud`. T3 Code should normalize the visible label and show a Cloud tag while keeping
-the full provider ID available internally.
+Ollama Cloud models are exposed with cloud-flavored IDs such as `gpt-oss:20b-cloud`,
+`gpt-oss:120b-cloud`, or `glm-5.2:cloud`. T3 Code should normalize the visible label and show a
+Cloud tag while keeping the full provider ID available internally.
 
 Ollama's pricing page says the free tier includes cloud access, while Pro includes higher cloud usage
 and access to larger cloud models. Treat the cloud catalog as discoverable but not automatically

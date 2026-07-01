@@ -50,6 +50,7 @@ import { ProjectionThreadProposedPlan } from "../../persistence/Services/Project
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { isT3SubagentThreadId } from "../subagentThread.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
@@ -1559,7 +1560,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   : Result.failVoid,
               ),
               threads: Arr.filterMap(threadRows, (row) =>
-                row.deletedAt === null
+                row.deletedAt === null && !isT3SubagentThreadId(row.threadId)
                   ? Result.succeed({
                       id: row.threadId,
                       projectId: row.projectId,
@@ -1693,27 +1694,29 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     )
                   : Result.failVoid,
               ),
-              threads: threadRows.map(
-                (row): OrchestrationThreadShell => ({
-                  id: row.threadId,
-                  projectId: row.projectId,
-                  title: row.title,
-                  modelSelection: row.modelSelection,
-                  runtimeMode: row.runtimeMode,
-                  interactionMode: row.interactionMode,
-                  branch: row.branch,
-                  worktreePath: row.worktreePath,
-                  latestTurn: latestTurnByThread.get(row.threadId) ?? null,
-                  createdAt: row.createdAt,
-                  updatedAt: row.updatedAt,
-                  archivedAt: row.archivedAt,
-                  session: sessionByThread.get(row.threadId) ?? null,
-                  latestUserMessageAt: row.latestUserMessageAt,
-                  hasPendingApprovals: row.pendingApprovalCount > 0,
-                  hasPendingUserInput: row.pendingUserInputCount > 0,
-                  hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
-                }),
-              ),
+              threads: threadRows
+                .filter((row) => !isT3SubagentThreadId(row.threadId))
+                .map(
+                  (row): OrchestrationThreadShell => ({
+                    id: row.threadId,
+                    projectId: row.projectId,
+                    title: row.title,
+                    modelSelection: row.modelSelection,
+                    runtimeMode: row.runtimeMode,
+                    interactionMode: row.interactionMode,
+                    branch: row.branch,
+                    worktreePath: row.worktreePath,
+                    latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                    createdAt: row.createdAt,
+                    updatedAt: row.updatedAt,
+                    archivedAt: row.archivedAt,
+                    session: sessionByThread.get(row.threadId) ?? null,
+                    latestUserMessageAt: row.latestUserMessageAt,
+                    hasPendingApprovals: row.pendingApprovalCount > 0,
+                    hasPendingUserInput: row.pendingUserInputCount > 0,
+                    hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                  }),
+                ),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
             };
 

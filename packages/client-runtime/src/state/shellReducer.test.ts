@@ -135,6 +135,19 @@ describe("applyShellStreamEvent", () => {
       expect(next.snapshotSequence).toBe(4);
     });
 
+    it("keeps T3 subagent child threads out of the shell snapshot", () => {
+      const event: OrchestrationShellStreamEvent = {
+        kind: "thread-upserted",
+        sequence: 4,
+        thread: { ...stubThread, id: ThreadId.make("subagent:child-1") },
+      };
+
+      const next = applyShellStreamEvent(baseSnapshot, event);
+
+      expect(next.threads).toHaveLength(0);
+      expect(next.snapshotSequence).toBe(4);
+    });
+
     it("updates an existing thread", () => {
       const snapshotWithThread: OrchestrationShellSnapshot = {
         ...baseSnapshot,

@@ -8,7 +8,7 @@ T3-owned MCP tools may not appear in the base system tool list. If the user asks
 
 In Codex sessions, use \`tool_search\` with the exact query \`t3_subagent\` or \`mcp__t3_code\` when discovering T3 tools. Generic queries such as "available MCP tools" can miss deferred T3 MCP tools.
 
-When available, use \`t3_subagent\` to start a focused T3-managed child thread instead of trying to simulate delegation with ad hoc prompts. Use \`explore\` for read-only codebase discovery, \`implement\` for a narrow code change, and \`review\` for bug/regression review. Provide a concise task prompt and an optional title. The tool returns child thread metadata immediately; follow the child thread/work log for results.
+When available, use \`t3_subagent\` to start a focused T3-managed child thread instead of trying to simulate delegation with ad hoc prompts. Provide a concise task prompt, optional title, and optional agent. Available explicit agents are \`ollama-gpt-oss-120b-cloud\` and \`ollama-gpt-oss-20b-cloud\`; omit \`agent\` to inherit the parent session model. The tool returns child thread and queue metadata immediately; T3 will queue the child input and full result back to the parent thread when it finishes.
 
 Do not call hidden, preview, or provider-internal T3 tools unless they are explicitly exposed by the \`t3-code\` MCP server for this session.
 `;

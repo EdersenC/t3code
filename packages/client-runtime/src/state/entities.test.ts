@@ -268,6 +268,44 @@ describe("environment entity projections", () => {
     expect(harness.registry.get(threadAtom)).toBe(thread);
   });
 
+  it("hides T3 subagent child threads from shell refs and project collections", () => {
+    const harness = makeHarness();
+    const subagentThread = {
+      ...THREAD_SHELL,
+      id: ThreadId.make("subagent:child-1"),
+      title: "Anonymous child session",
+    };
+
+    harness.registry.set(
+      harness.shellStateAtom,
+      AsyncResult.success(
+        shellState({
+          ...SNAPSHOT,
+          threads: [...SNAPSHOT.threads, subagentThread],
+        }),
+      ),
+    );
+
+    const threadRefs = harness.registry.get(
+      harness.threadShells.environmentThreadRefsAtom(ENVIRONMENT_ID),
+    );
+    const projectThreads = harness.registry.get(
+      harness.threadShells.threadShellsForProjectRefsAtom([
+        { environmentId: ENVIRONMENT_ID, projectId: PROJECT_ID },
+      ]),
+    );
+    const hiddenThread = harness.registry.get(
+      harness.threadShells.threadShellAtom({
+        environmentId: ENVIRONMENT_ID,
+        threadId: subagentThread.id,
+      }),
+    );
+
+    expect(threadRefs.map((ref) => ref.threadId)).not.toContain(subagentThread.id);
+    expect(projectThreads.map((thread) => thread.id)).not.toContain(subagentThread.id);
+    expect(hiddenThread).toBeNull();
+  });
+
   it("preserves project-scoped thread collections across unrelated project updates", () => {
     const harness = makeHarness();
     const projectRef = {

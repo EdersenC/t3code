@@ -7,7 +7,7 @@ const dependencies = [T3SubagentRuntime.T3SubagentRuntime];
 
 export const T3SubagentTool = Tool.make("t3_subagent", {
   description:
-    "Start a T3-owned subagent thread. Use subagentType 'explore' for read-only discovery, 'implement' for a narrow code change, or 'review' for bug/regression review.",
+    "Start a T3-owned general-purpose subagent thread with a prompt, optional title, and optional agent. Available agents: ollama-gpt-oss-120b-cloud, ollama-gpt-oss-20b-cloud. Omit agent to inherit the parent session model. The subagent input and full result are queued back to the parent thread when it finishes.",
   parameters: T3SubagentRunInput,
   success: T3SubagentRunResult,
   failure: T3SubagentRunError,

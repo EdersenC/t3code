@@ -162,7 +162,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -4755,6 +4755,19 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, isServerThread, onDiffPanelOpen],
   );
+  const onOpenSubagentThread = useCallback(
+    (childThreadId: ThreadId) => {
+      if (!activeThreadRef) return;
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams({
+          environmentId: activeThreadRef.environmentId,
+          threadId: childThreadId,
+        }),
+      });
+    },
+    [activeThreadRef, navigate],
+  );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
   const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
@@ -4837,6 +4850,7 @@ function ChatViewContent(props: ChatViewProps) {
         latestTurn={activeLatestTurn}
         activeTurnInProgress={isWorking || !latestTurnSettled}
         workspaceRoot={activeWorkspaceRoot}
+        onOpenSubagentThread={onOpenSubagentThread}
       />
     ) : activeRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar

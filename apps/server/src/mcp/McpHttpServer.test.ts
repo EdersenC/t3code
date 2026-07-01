@@ -338,8 +338,8 @@ it.effect("registers the T3 subagent toolkit with the production runtime", () =>
         .callTool({
           name: "t3_subagent",
           arguments: {
-            subagentType: "review",
             prompt: "Review the pending change.",
+            agent: "ollama-gpt-oss-20b-cloud",
           },
         })
         .pipe(
@@ -354,9 +354,10 @@ it.effect("registers the T3 subagent toolkit with the production runtime", () =>
       expect(result.structuredContent).toMatchObject({
         status: "started",
         parentThreadId: threadId,
-        subagentType: "review",
-        title: "Review",
+        title: "Subagent",
+        agent: "ollama-gpt-oss-20b-cloud",
       });
+      expect(result.structuredContent).toHaveProperty("queueItemId");
       expect(dispatched.map((command) => command.type)).toEqual([
         "thread.create",
         "thread.activity.append",
@@ -370,21 +371,30 @@ it.effect("registers the T3 subagent toolkit with the production runtime", () =>
       expect(activityCommand.threadId).toBe(threadId);
       expect(activityCommand.activity.kind).toBe("t3.subagent.started");
       expect(activityCommand.activity.payload).toMatchObject({
-        capabilityId: "t3:subagent:review",
-        capabilityKind: "subagent",
+        status: "started",
+        capabilityId: "t3:tool:subagent",
+        capabilityKind: "tool",
         capabilitySource: "t3",
         harnessName: "T3 MCP",
         toolName: "t3_subagent",
-        subagentType: "review",
         parentThreadId: threadId,
+        childMessageId: expect.any(String),
+        title: "Subagent",
+        prompt: "Review the pending change.",
+        promptPreview: "Review the pending change.",
+        agent: "ollama-gpt-oss-20b-cloud",
       });
+      expect(activityCommand.activity.payload).toHaveProperty("queueItemId");
 
       const turnCommand = dispatched[2] as Extract<
         OrchestrationCommand,
         { type: "thread.turn.start" }
       >;
-      expect(turnCommand.message.text).toContain("You are the T3 review subagent.");
-      expect(turnCommand.message.text).toContain("Review the pending change.");
+      expect(turnCommand.modelSelection).toEqual({
+        instanceId: ProviderInstanceId.make("ollama"),
+        model: "ollama/gpt-oss:20b-cloud",
+      });
+      expect(turnCommand.message.text).toBe("Review the pending change.");
     }),
   ).pipe(Effect.provide(makeSubagentProductionLayer(dispatched)));
 });
@@ -427,7 +437,7 @@ it.effect("serves T3 subagent calls through authenticated HTTP MCP", () => {
           "mcp-session-id": sessionId!,
         },
         body: HttpBody.text(
-          `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"t3_subagent","arguments":{"subagentType":"review","prompt":"Review the HTTP MCP path."}}}`,
+          `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"t3_subagent","arguments":{"prompt":"Review the HTTP MCP path."}}}`,
           "application/json",
         ),
       });
@@ -442,8 +452,8 @@ it.effect("serves T3 subagent calls through authenticated HTTP MCP", () => {
       expect(body.result?.structuredContent).toMatchObject({
         status: "started",
         parentThreadId: threadId,
-        subagentType: "review",
       });
+      expect(body.result?.structuredContent).toHaveProperty("queueItemId");
       expect(dispatched.map((command) => command.type)).toEqual([
         "thread.create",
         "thread.activity.append",

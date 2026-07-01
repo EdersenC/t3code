@@ -231,7 +231,11 @@ export function buildOpenCodePermissionRules(
   );
 
   if (runtimeMode === "full-access") {
-    return [...skillPermissionRules, { permission: "*", pattern: "*", action: "allow" }];
+    return [
+      ...skillPermissionRules,
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "task", pattern: "*", action: "deny" },
+    ];
   }
 
   return [
@@ -245,6 +249,7 @@ export function buildOpenCodePermissionRules(
     { permission: "external_directory", pattern: "*", action: "ask" },
     { permission: "doom_loop", pattern: "*", action: "ask" },
     { permission: "question", pattern: "*", action: "allow" },
+    { permission: "task", pattern: "*", action: "deny" },
   ];
 }
 

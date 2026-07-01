@@ -70,6 +70,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { isT3SubagentThreadId } from "./orchestration/subagentThread.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -663,6 +664,9 @@ const makeWsRpcLayer = (
             );
           case "thread.deleted":
           case "thread.archived":
+            if (isT3SubagentThreadId(event.payload.threadId)) {
+              return Effect.succeed(Option.none());
+            }
             return Effect.succeed(
               Option.some({
                 kind: "thread-removed" as const,
@@ -671,6 +675,9 @@ const makeWsRpcLayer = (
               }),
             );
           case "thread.unarchived":
+            if (isT3SubagentThreadId(event.payload.threadId)) {
+              return Effect.succeed(Option.none());
+            }
             return projectionSnapshotQuery.getThreadShellById(event.payload.threadId).pipe(
               Effect.map((thread) =>
                 Option.map(thread, (nextThread) => ({
@@ -683,6 +690,9 @@ const makeWsRpcLayer = (
             );
           default:
             if (event.aggregateKind !== "thread") {
+              return Effect.succeed(Option.none());
+            }
+            if (isT3SubagentThreadId(event.aggregateId)) {
               return Effect.succeed(Option.none());
             }
             return projectionSnapshotQuery

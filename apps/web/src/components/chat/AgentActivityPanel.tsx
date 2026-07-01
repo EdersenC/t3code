@@ -4,6 +4,7 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import {
+  ExternalLink,
   CheckCircle2,
   ChevronDown,
   Circle,
@@ -15,6 +16,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { memo, useMemo, useState } from "react";
+import type { ThreadId } from "@t3tools/contracts";
 
 import { formatDuration, type WorkLogEntry, workLogEntryIsToolLike } from "../../session-logic";
 import {
@@ -25,6 +27,7 @@ import {
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Separator } from "../ui/separator";
 import { MessageCopyButton } from "./MessageCopyButton";
@@ -44,6 +47,7 @@ interface AgentActivityPanelProps {
   latestTurn: OrchestrationLatestTurn | null;
   activeTurnInProgress: boolean;
   workspaceRoot: string | undefined;
+  onOpenSubagentThread?: ((threadId: ThreadId) => void) | undefined;
 }
 
 interface ActivityTurnGroup {
@@ -184,6 +188,7 @@ export const AgentActivityPanel = memo(function AgentActivityPanel({
   latestTurn,
   activeTurnInProgress,
   workspaceRoot,
+  onOpenSubagentThread,
 }: AgentActivityPanelProps) {
   const [expandedEntryIds, setExpandedEntryIds] = useState<ReadonlySet<string>>(new Set());
   const usageByTurnId = useMemo(
@@ -245,6 +250,7 @@ export const AgentActivityPanel = memo(function AgentActivityPanel({
                 activeTurnInProgress={activeTurnInProgress && latestTurn?.turnId === group.turnId}
                 expandedEntryIds={expandedEntryIds}
                 workspaceRoot={workspaceRoot}
+                onOpenSubagentThread={onOpenSubagentThread}
                 onToggleEntry={toggleEntry}
               />
             ))}
@@ -261,6 +267,7 @@ function ActivityTurnSection({
   activeTurnInProgress,
   expandedEntryIds,
   workspaceRoot,
+  onOpenSubagentThread,
   onToggleEntry,
 }: {
   group: ActivityTurnGroup;
@@ -268,6 +275,7 @@ function ActivityTurnSection({
   activeTurnInProgress: boolean;
   expandedEntryIds: ReadonlySet<string>;
   workspaceRoot: string | undefined;
+  onOpenSubagentThread?: ((threadId: ThreadId) => void) | undefined;
   onToggleEntry: (entryId: string) => void;
 }) {
   const summary = summarizeEntries(group.entries, activeTurnInProgress);
@@ -328,6 +336,7 @@ function ActivityTurnSection({
             expanded={expandedEntryIds.has(entry.id)}
             activeTurnInProgress={activeTurnInProgress}
             workspaceRoot={workspaceRoot}
+            onOpenSubagentThread={onOpenSubagentThread}
             onToggle={() => onToggleEntry(entry.id)}
             showSeparator={index > 0}
           />
@@ -342,6 +351,7 @@ function ActivityEntryRow({
   expanded,
   activeTurnInProgress,
   workspaceRoot,
+  onOpenSubagentThread,
   onToggle,
   showSeparator,
 }: {
@@ -349,6 +359,7 @@ function ActivityEntryRow({
   expanded: boolean;
   activeTurnInProgress: boolean;
   workspaceRoot: string | undefined;
+  onOpenSubagentThread?: ((threadId: ThreadId) => void) | undefined;
   onToggle: () => void;
   showSeparator: boolean;
 }) {
@@ -360,6 +371,8 @@ function ActivityEntryRow({
   const preview = workEntryPreview(entry, workspaceRoot);
   const canExpand = sections.length > 0 && body !== null;
   const statusLabel = workEntryStatusLabel(status);
+  const canOpenSubagentThread =
+    entry.subagentChildThreadId !== undefined && onOpenSubagentThread !== undefined;
 
   return (
     <div className="bg-card/30">
@@ -404,7 +417,20 @@ function ActivityEntryRow({
             <span className="text-[10px] font-medium uppercase text-muted-foreground">
               Tool call details
             </span>
-            <MessageCopyButton text={body} size="icon-xs" variant="ghost" className="h-5 w-5" />
+            <div className="flex items-center gap-1">
+              {canOpenSubagentThread ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="h-5 px-1.5 text-[10px]"
+                  onClick={() => onOpenSubagentThread(entry.subagentChildThreadId!)}
+                >
+                  <ExternalLink className="size-3" />
+                  Open child
+                </Button>
+              ) : null}
+              <MessageCopyButton text={body} size="icon-xs" variant="ghost" className="h-5 w-5" />
+            </div>
           </div>
           <div className="max-h-[55vh] overflow-auto px-2.5 pb-2.5 scrollbar-gutter-stable">
             <div className="space-y-2">

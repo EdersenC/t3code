@@ -98,6 +98,7 @@ export interface WorkLogEntry {
   capabilitySource?: T3CapabilitySource;
   capabilityProviderInstanceId?: string;
   capabilityHarnessName?: string;
+  subagentChildThreadId?: ThreadId;
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
@@ -689,11 +690,15 @@ function extractWorkLogToolLifecycleStatus(
   const s = payload.status;
   if (
     s === "inProgress" ||
+    s === "started" ||
     s === "completed" ||
+    s === "delivered" ||
     s === "failed" ||
     s === "declined" ||
     s === "stopped"
   ) {
+    if (s === "started") return "inProgress";
+    if (s === "delivered") return "completed";
     return s;
   }
   return undefined;
@@ -757,6 +762,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const itemType = extractWorkLogItemType(payload);
   const capabilityProvenance = extractWorkLogCapabilityProvenance(payload);
   const requestKind = extractWorkLogRequestKind(payload);
+  const subagentChildThreadId =
+    capabilityProvenance.capabilityId === "t3:tool:subagent" ||
+    asTrimmedString(payload?.toolName) === "t3_subagent"
+      ? asTrimmedString(payload?.childThreadId)
+      : null;
   if (detail) {
     entry.detail = detail;
   }
@@ -795,6 +805,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (capabilityProvenance.harnessName) {
     entry.capabilityHarnessName = capabilityProvenance.harnessName;
+  }
+  if (subagentChildThreadId) {
+    entry.subagentChildThreadId = subagentChildThreadId as ThreadId;
   }
   if (requestKind) {
     entry.requestKind = requestKind;
@@ -835,6 +848,12 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
+  if (
+    isT3SubagentActivityKind(previous.activityKind) &&
+    isT3SubagentActivityKind(next.activityKind)
+  ) {
+    return previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey;
+  }
   if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
     return false;
   }
@@ -873,6 +892,7 @@ function mergeDerivedWorkLogEntries(
   const capabilityProviderInstanceId =
     next.capabilityProviderInstanceId ?? previous.capabilityProviderInstanceId;
   const capabilityHarnessName = next.capabilityHarnessName ?? previous.capabilityHarnessName;
+  const subagentChildThreadId = next.subagentChildThreadId ?? previous.subagentChildThreadId;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
@@ -893,6 +913,7 @@ function mergeDerivedWorkLogEntries(
       ? { capabilityProviderInstanceId: capabilityProviderInstanceId }
       : {}),
     ...(capabilityHarnessName ? { capabilityHarnessName } : {}),
+    ...(subagentChildThreadId ? { subagentChildThreadId } : {}),
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolCallId ? { toolCallId } : {}),
@@ -913,6 +934,9 @@ function mergeChangedFiles(
 }
 
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
+  if (isT3SubagentActivityKind(entry.activityKind)) {
+    return entry.toolCallId ? `t3-subagent:${entry.toolCallId}` : undefined;
+  }
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
   }
@@ -926,6 +950,14 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
     return undefined;
   }
   return [itemType, normalizedLabel, detail].join("\u001f");
+}
+
+function isT3SubagentActivityKind(kind: OrchestrationThreadActivity["kind"]): boolean {
+  return (
+    kind === "t3.subagent.started" ||
+    kind === "t3.subagent.completed" ||
+    kind === "t3.subagent.delivered"
+  );
 }
 
 function normalizeCompactToolLabel(value: string): string {
@@ -1186,6 +1218,10 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
 }
 
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
+  const queueItemId = asTrimmedString(payload?.queueItemId);
+  if (queueItemId) {
+    return queueItemId;
+  }
   const data = asRecord(payload?.data);
   return asTrimmedString(data?.toolCallId);
 }
@@ -1269,6 +1305,10 @@ function extractToolDetail(
   payload: Record<string, unknown> | null,
   heading: string,
 ): string | null {
+  const subagentDetail = buildT3SubagentToolDetail(payload);
+  if (subagentDetail) {
+    return subagentDetail;
+  }
   const rawDetail = asTrimmedString(payload?.detail);
   const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
   const normalizedHeading = normalizePreviewForComparison(heading);
@@ -1291,6 +1331,40 @@ function extractToolDetail(
   }
 
   return null;
+}
+
+function buildT3SubagentToolDetail(payload: Record<string, unknown> | null): string | null {
+  const isT3Subagent =
+    asTrimmedString(payload?.capabilityId) === "t3:tool:subagent" ||
+    asTrimmedString(payload?.toolName) === "t3_subagent";
+  if (!isT3Subagent) {
+    return null;
+  }
+
+  const resultText =
+    asTrimmedString(payload?.resultText) ?? asTrimmedString(payload?.resultPreview);
+  const childThreadId = asTrimmedString(payload?.childThreadId);
+  if (resultText) {
+    const prompt = asTrimmedString(payload?.prompt) ?? asTrimmedString(payload?.promptPreview);
+    return [
+      ...(childThreadId ? ["Child thread", childThreadId, ""] : []),
+      ...(prompt ? ["Input", prompt, ""] : []),
+      "Output",
+      resultText,
+    ].join("\n");
+  }
+
+  if (payload?.status === "delivered") {
+    return null;
+  }
+
+  const prompt = asTrimmedString(payload?.prompt) ?? asTrimmedString(payload?.promptPreview);
+  return (
+    [
+      ...(childThreadId ? ["Child thread", childThreadId, ""] : []),
+      ...(prompt ? ["Input", prompt] : []),
+    ].join("\n") || null
+  );
 }
 
 function stripTrailingExitCode(value: string): {
@@ -1472,6 +1546,9 @@ function compareActivityLifecycleRank(kind: string): number {
   }
   if (kind.endsWith(".completed") || kind.endsWith(".resolved")) {
     return 2;
+  }
+  if (kind.endsWith(".delivered")) {
+    return 3;
   }
   return 1;
 }
