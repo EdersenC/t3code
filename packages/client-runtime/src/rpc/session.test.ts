@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EMPTY_T3_CAPABILITY_SNAPSHOT,
   EnvironmentId,
   ServerConfig,
   type ServerConfig as ServerConfigType,
@@ -121,6 +122,7 @@ const SERVER_CONFIG: ServerConfigType = {
   keybindingsConfigPath: "/tmp/workspace/keybindings.json",
   keybindings: [],
   issues: [],
+  capabilities: EMPTY_T3_CAPABILITY_SNAPSHOT,
   providers: [],
   availableEditors: [],
   observability: {

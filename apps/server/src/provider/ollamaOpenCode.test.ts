@@ -22,6 +22,8 @@ const decodeJson = Schema.decodeUnknownSync(Schema.UnknownFromJsonString);
 
 type OllamaOpenCodeConfig = {
   readonly model: string;
+  readonly skills?: { readonly paths: ReadonlyArray<string> };
+  readonly permission?: { readonly skill: Readonly<Record<string, "allow" | "deny">> };
   readonly provider: {
     readonly ollama: {
       readonly npm: string;
@@ -70,6 +72,31 @@ describe("Ollama OpenCode config helpers", () => {
     expect(config.provider.ollama.npm).toBe("@ai-sdk/openai-compatible");
     expect(config.provider.ollama.options.baseURL).toBe("http://localhost:11434/v1");
     expect(Object.keys(config.provider.ollama.models)).toEqual(["qwen2.5-coder:7b", "llama3.2:3b"]);
+  });
+
+  it("adds shared T3 capability runtime config", () => {
+    const config = decodeJson(
+      buildOllamaOpenCodeConfig({
+        settings: {
+          baseUrl: "http://localhost:11434/v1",
+          customModels: [DEFAULT_OLLAMA_MODEL],
+        },
+        modelIds: ["qwen2.5-coder:7b"],
+        capabilityRuntime: {
+          skillPaths: ["/tmp/t3-skills"],
+          skillPermissions: {
+            "customize-opencode": "allow",
+            "legacy-hidden-skill": "deny",
+          },
+        },
+      }),
+    ) as OllamaOpenCodeConfig;
+
+    expect(config.skills?.paths).toEqual(["/tmp/t3-skills"]);
+    expect(config.permission?.skill).toEqual({
+      "customize-opencode": "allow",
+      "legacy-hidden-skill": "deny",
+    });
   });
 
   it("adds selected Ollama reasoning effort to generated model options", () => {

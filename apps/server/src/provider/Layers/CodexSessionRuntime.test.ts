@@ -201,9 +201,12 @@ describe("T3 browser developer instructions", () => {
       CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
     ]) {
       NodeAssert.match(instructions, /t3-code/);
-      NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(instructions, /Do not switch to global browser skills/);
+      NodeAssert.match(instructions, /t3_subagent/);
+      NodeAssert.match(instructions, /tool_search/);
+      NodeAssert.match(instructions, /mcp__t3_code/);
+      NodeAssert.match(instructions, /explore/);
+      NodeAssert.doesNotMatch(instructions, /preview_status/);
+      NodeAssert.doesNotMatch(instructions, /preview_open/);
     }
   });
 });

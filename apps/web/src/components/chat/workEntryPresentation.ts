@@ -76,7 +76,9 @@ function pushUniqueSection(
   }
   if (
     section.id === "output" &&
-    sections.some((entry) => entry.id === "command" && normalizeDetailText(entry.text) === normalized)
+    sections.some(
+      (entry) => entry.id === "command" && normalizeDetailText(entry.text) === normalized,
+    )
   ) {
     return;
   }

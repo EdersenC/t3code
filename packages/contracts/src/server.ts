@@ -20,6 +20,7 @@ import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
+import { EMPTY_T3_CAPABILITY_SNAPSHOT, T3CapabilitySnapshot } from "./capability.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -422,6 +423,9 @@ export const ServerConfig = Schema.Struct({
   availableEditors: Schema.Array(EditorId),
   observability: ServerObservability,
   settings: ServerSettings,
+  capabilities: T3CapabilitySnapshot.pipe(
+    Schema.withDecodingDefault(Effect.succeed(EMPTY_T3_CAPABILITY_SNAPSHOT)),
+  ),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -455,6 +459,7 @@ export const ServerConfigUpdatedPayload = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviders,
   settings: Schema.optional(ServerSettings),
+  capabilities: Schema.optional(T3CapabilitySnapshot),
 });
 export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
 
@@ -467,11 +472,13 @@ export type ServerConfigKeybindingsUpdatedPayload =
 
 export const ServerConfigProviderStatusesPayload = Schema.Struct({
   providers: ServerProviders,
+  capabilities: Schema.optional(T3CapabilitySnapshot),
 });
 export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderStatusesPayload.Type;
 
 export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
   settings: ServerSettings,
+  capabilities: Schema.optional(T3CapabilitySnapshot),
 });
 export type ServerConfigSettingsUpdatedPayload = typeof ServerConfigSettingsUpdatedPayload.Type;
 

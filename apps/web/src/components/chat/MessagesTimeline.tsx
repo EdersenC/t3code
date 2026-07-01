@@ -1507,6 +1507,18 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   return workToneIcon(workEntry.tone).iconName;
 }
 
+function workEntryCapabilityBadge(workEntry: TimelineWorkEntry): string | null {
+  if (!workEntry.capabilitySource) return null;
+  const source =
+    workEntry.capabilitySource === "t3"
+      ? "T3"
+      : workEntry.capabilitySource === "provider-native"
+        ? (workEntry.capabilityProviderInstanceId ?? "Provider")
+        : (workEntry.capabilityHarnessName ?? "Harness");
+  const kind = workEntry.capabilityKind ?? "capability";
+  return `${source} ${kind}`;
+}
+
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
@@ -1524,6 +1536,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
   const heading = workEntryHeading(workEntry);
+  const capabilityBadge = workEntryCapabilityBadge(workEntry);
   const rawPreview = workEntryPreview(workEntry, workspaceRoot);
   const preview =
     rawPreview &&
@@ -1596,6 +1609,11 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
               {preview && (
                 <span className="min-w-0 flex-1 truncate text-muted-foreground/55">{preview}</span>
               )}
+              {capabilityBadge ? (
+                <span className="shrink-0 rounded-sm border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
+                  {capabilityBadge}
+                </span>
+              ) : null}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">

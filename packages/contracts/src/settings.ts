@@ -11,6 +11,7 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import { T3CapabilityRegistrySettings, T3CapabilityRegistrySettingsPatch } from "./capability.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -747,6 +748,9 @@ export const ServerSettings = Schema.Struct({
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   localModelRuntime: LocalModelRuntimeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  capabilityRegistry: T3CapabilityRegistrySettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -876,6 +880,7 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
+  capabilityRegistry: Schema.optionalKey(T3CapabilityRegistrySettingsPatch),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),

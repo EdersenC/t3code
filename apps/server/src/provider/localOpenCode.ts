@@ -7,6 +7,9 @@ import {
   type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 
+import type { OpenCodeCapabilityRuntime } from "../capabilities/T3CapabilityRegistry.ts";
+import { openCodeCapabilityConfigFragment } from "./opencodeCapabilities.ts";
+
 export const LOCAL_OPENCODE_PROVIDER_ID = "local-vllm";
 export const LOCAL_OPENCODE_PROVIDER_NAME = "Local vLLM";
 export const LOCAL_OPENAI_COMPATIBLE_PACKAGE = "@ai-sdk/openai-compatible";
@@ -296,6 +299,7 @@ export function formatLocalOpenCodeFailureDetail(input: {
 export function buildLocalOpenCodeConfig(input: {
   readonly settings: Pick<LocalSettings, "baseUrl" | "customModels"> & LocalOpenCodeLimitSettings;
   readonly modelIds: ReadonlyArray<string>;
+  readonly capabilityRuntime?: Pick<OpenCodeCapabilityRuntime, "skillPaths" | "skillPermissions">;
 }): string {
   const modelIds =
     input.modelIds.length > 0
@@ -316,6 +320,7 @@ export function buildLocalOpenCodeConfig(input: {
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     ...(defaultModelSlug ? { model: defaultModelSlug } : {}),
+    ...openCodeCapabilityConfigFragment(input),
     provider: {
       [LOCAL_OPENCODE_PROVIDER_ID]: {
         npm: LOCAL_OPENAI_COMPATIBLE_PACKAGE,

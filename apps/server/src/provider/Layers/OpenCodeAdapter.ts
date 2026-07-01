@@ -27,9 +27,11 @@ import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import type { OpenCodeCapabilityRuntime } from "../../capabilities/T3CapabilityRegistry.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { mergeOpenCodeCapabilityConfigContent } from "../opencodeCapabilities.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -100,6 +102,7 @@ interface OpenCodeSessionContext {
   readonly turns: Array<OpenCodeTurnSnapshot>;
   readonly turnInputs: Map<TurnId, OpenCodeTurnInputSnapshot>;
   readonly turnOutputById: Map<TurnId, OpenCodeTurnOutputSnapshot>;
+  readonly capabilityRuntime?: OpenCodeCapabilityRuntime;
   suppressSubscribedEventsUntilNextTurn: boolean;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
@@ -148,6 +151,11 @@ export interface OpenCodeAdapterLiveOptions {
     | ((input: {
         readonly modelSelection?: ModelSelection | undefined;
       }) => Effect.Effect<string | undefined>);
+  readonly capabilityRuntime?:
+    | OpenCodeCapabilityRuntime
+    | ((input: {
+        readonly modelSelection?: ModelSelection | undefined;
+      }) => Effect.Effect<OpenCodeCapabilityRuntime | undefined>);
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly describeErrorDetail?: (input: OpenCodeErrorDetailInput) => string;
@@ -630,6 +638,13 @@ export function makeOpenCodeAdapter(
       const configContent = options?.configContent;
       if (typeof configContent === "function") return configContent(input);
       return Effect.succeed(configContent);
+    };
+    const resolveCapabilityRuntime = (input: {
+      readonly modelSelection?: ModelSelection | undefined;
+    }) => {
+      const capabilityRuntime = options?.capabilityRuntime;
+      if (typeof capabilityRuntime === "function") return capabilityRuntime(input);
+      return Effect.succeed(capabilityRuntime);
     };
 
     const buildEventBase = (input: EventBaseInput) =>
@@ -1182,6 +1197,15 @@ export function makeOpenCodeAdapter(
                   : { status: "inProgress" as const }),
               ...(title ? { title } : {}),
               ...(detail ? { detail } : {}),
+              ...(itemType === "collab_agent_tool_call"
+                ? {
+                    capabilityId: `harness:${provider}:subagent:${part.tool}`,
+                    capabilityKind: "subagent" as const,
+                    capabilitySource: "harness-native" as const,
+                    providerInstanceId: boundInstanceId,
+                    harnessName: "OpenCode",
+                  }
+                : {}),
               data: {
                 tool: part.tool,
                 state: part.state,
@@ -1692,9 +1716,16 @@ export function makeOpenCodeAdapter(
               // The runtime binds the server's lifetime to the Scope.Scope
               // we provide below — closing `sessionScope` kills the child
               // process automatically. No manual `server.close()` needed.
-              const configContent = yield* resolveConfigContent({
+              const capabilityRuntime = yield* resolveCapabilityRuntime({
                 modelSelection: input.modelSelection,
               });
+              const rawConfigContent = yield* resolveConfigContent({
+                modelSelection: input.modelSelection,
+              });
+              const configContent = mergeOpenCodeCapabilityConfigContent(
+                rawConfigContent,
+                capabilityRuntime,
+              );
               const server = yield* openCodeRuntime.connectToOpenCodeServer({
                 binaryPath,
                 serverUrl,
@@ -1707,25 +1738,15 @@ export function makeOpenCodeAdapter(
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-              if (mcpSession && !server.external) {
+              if (mcpSession) {
                 yield* runOpenCodeSdk("mcp.add", () =>
-                  client.mcp.add({
-                    name: "t3-code",
-                    config: {
-                      type: "remote",
-                      url: mcpSession.endpoint,
-                      headers: {
-                        Authorization: mcpSession.authorizationHeader,
-                      },
-                      oauth: false,
-                    },
-                  }),
+                  client.mcp.add(McpProviderSession.openCodeMcpAddInput(mcpSession)),
                 );
               }
               const openCodeSession = yield* runOpenCodeSdk("session.create", () =>
                 client.session.create({
                   title: `T3 Code ${input.threadId}`,
-                  permission: buildOpenCodePermissionRules(input.runtimeMode),
+                  permission: buildOpenCodePermissionRules(input.runtimeMode, capabilityRuntime),
                 }),
               );
               if (!openCodeSession.data) {
@@ -1739,6 +1760,7 @@ export function makeOpenCodeAdapter(
                 server,
                 client,
                 openCodeSession: openCodeSession.data,
+                capabilityRuntime,
               };
             }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
           );
@@ -1811,6 +1833,7 @@ export function makeOpenCodeAdapter(
           turns: [],
           turnInputs: new Map(),
           turnOutputById: new Map(),
+          ...(started.capabilityRuntime ? { capabilityRuntime: started.capabilityRuntime } : {}),
           suppressSubscribedEventsUntilNextTurn: false,
           activeTurnId: undefined,
           activeAgent: undefined,
@@ -1925,6 +1948,9 @@ export function makeOpenCodeAdapter(
           model: parsedModel,
           ...(context.activeAgent ? { agent: context.activeAgent } : {}),
           ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+          ...(context.capabilityRuntime?.preloadSystemPrompt
+            ? { system: context.capabilityRuntime.preloadSystemPrompt }
+            : {}),
           parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
         }),
       ).pipe(

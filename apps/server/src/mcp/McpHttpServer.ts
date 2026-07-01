@@ -6,13 +6,16 @@ import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
+import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpBody, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as T3SubagentRuntime from "./T3SubagentRuntime.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -22,11 +25,13 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { T3SubagentToolkitHandlersLive } from "./toolkits/subagent/handlers.ts";
+import { T3SubagentToolkit } from "./toolkits/subagent/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
     error: "invalid_mcp_credential",
-    message: "A valid provider-scoped MCP bearer credential is required.",
+    message: "A valid T3 MCP bearer credential and thread context are required.",
   },
   {
     status: 401,
@@ -63,6 +68,67 @@ export const normalizeMcpHttpResponse = (
     : response;
 };
 
+const t3ToolCapabilityByName: ReadonlyMap<string, McpInvocationContext.McpCapability> = new Map([
+  ["t3_subagent", McpInvocationContext.T3_SUBAGENT_MCP_CAPABILITY],
+]);
+
+function filterMcpToolCatalogResponse(
+  response: HttpServerResponse.HttpServerResponse,
+  invocation: McpInvocationContext.McpInvocationScope,
+): HttpServerResponse.HttpServerResponse {
+  if (response.status !== 200 || response.body._tag !== "Uint8Array") return response;
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(Buffer.from(response.body.body).toString("utf8"));
+  } catch {
+    return response;
+  }
+
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !("result" in payload) ||
+    typeof payload.result !== "object" ||
+    payload.result === null ||
+    !("tools" in payload.result) ||
+    !Array.isArray(payload.result.tools)
+  ) {
+    return response;
+  }
+
+  const payloadWithTools = payload as {
+    readonly result: { readonly tools: ReadonlyArray<unknown>; readonly [key: string]: unknown };
+    readonly [key: string]: unknown;
+  };
+
+  const filteredTools = payloadWithTools.result.tools.filter((tool: unknown) => {
+    if (
+      typeof tool !== "object" ||
+      tool === null ||
+      !("name" in tool) ||
+      typeof tool.name !== "string"
+    ) {
+      return true;
+    }
+    const capability = t3ToolCapabilityByName.get(tool.name);
+    return capability === undefined || invocation.capabilities.has(capability);
+  });
+
+  if (filteredTools.length === payloadWithTools.result.tools.length) return response;
+
+  return HttpServerResponse.setBody(
+    response,
+    HttpBody.jsonUnsafe({
+      ...payloadWithTools,
+      result: {
+        ...payloadWithTools.result,
+        tools: filteredTools,
+      },
+    }),
+  );
+}
+
 const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
   Effect.map(
     (registry): McpAuthMiddleware =>
@@ -73,11 +139,14 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
           authorization?.startsWith("Bearer ") === true
             ? authorization.slice("Bearer ".length).trim()
             : "";
-        const invocation = yield* registry.resolve(token);
+        const contextRequest = parseMcpInvocationContextRequest(request);
+        if (!contextRequest) return unauthorized;
+        const invocation = yield* registry.resolve(token, contextRequest);
         if (!invocation) return unauthorized;
         return yield* httpEffect.pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.map(normalizeMcpHttpResponse),
+          Effect.map((response) => filterMcpToolCatalogResponse(response, invocation)),
         );
       }),
   ),
@@ -87,6 +156,29 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
 const McpAuthMiddlewareLive = HttpRouter.middleware<{
   provides: McpInvocationContext.McpInvocationContext;
 }>()(makeMcpAuthMiddleware).layer;
+
+function parseMcpInvocationContextRequest(
+  request: HttpServerRequest.HttpServerRequest,
+): McpInvocationContext.McpInvocationContextRequest | undefined {
+  const rawUrl = request.url;
+  let url: URL;
+  try {
+    url = new URL(rawUrl, `http://${request.headers.host ?? "127.0.0.1"}`);
+  } catch {
+    return undefined;
+  }
+  const rawThreadId =
+    url.searchParams.get("threadId") ?? request.headers["x-t3-thread-id"] ?? undefined;
+  const rawProviderInstanceId =
+    url.searchParams.get("providerInstanceId") ??
+    request.headers["x-t3-provider-instance-id"] ??
+    undefined;
+  if (!rawThreadId || !rawProviderInstanceId) return undefined;
+  return {
+    threadId: ThreadId.make(rawThreadId),
+    providerInstanceId: ProviderInstanceId.make(rawProviderInstanceId),
+  };
+}
 
 const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
   if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
@@ -208,10 +300,38 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
+export const T3SubagentToolkitRegistrationLive = McpServer.toolkit(T3SubagentToolkit).pipe(
+  Layer.provide(T3SubagentToolkitHandlersLive),
+  Layer.provide(T3SubagentRuntime.layer),
+);
+
+export const T3ToolCatalogNotificationLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const settings = yield* ServerSettingsService;
+    let previousVisible = McpSessionRegistry.isT3SubagentMcpCapabilityEnabled(
+      yield* settings.getSettings,
+    );
+
+    yield* settings.streamChanges.pipe(
+      Stream.runForEach((nextSettings) => {
+        const nextVisible = McpSessionRegistry.isT3SubagentMcpCapabilityEnabled(nextSettings);
+        if (nextVisible === previousVisible) return Effect.void;
+        previousVisible = nextVisible;
+        return server.notifications["notifications/tools/list_changed"]({});
+      }),
+      Effect.forkScoped,
+    );
+  }),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
   path: "/mcp",
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(
+  T3SubagentToolkitRegistrationLive,
+  T3ToolCatalogNotificationLive,
+).pipe(Layer.provideMerge(McpTransportLive));

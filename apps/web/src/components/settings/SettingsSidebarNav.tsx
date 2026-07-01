@@ -8,6 +8,7 @@ import {
   Link2Icon,
   PaletteIcon,
   Settings2Icon,
+  WrenchIcon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 
@@ -28,6 +29,7 @@ export type SettingsSectionPath =
   | "/settings/personalization"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/tools"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/archived";
@@ -41,6 +43,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "Personalization", to: "/settings/personalization", icon: PaletteIcon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
+  { label: "Subagent", to: "/settings/tools", icon: WrenchIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },

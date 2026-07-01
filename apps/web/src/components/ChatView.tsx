@@ -1,5 +1,6 @@
 import {
   type ApprovalRequestId,
+  EMPTY_T3_CAPABILITY_SNAPSHOT,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
   type EnvironmentId,
@@ -206,6 +207,7 @@ import {
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { AgentActivityPanel } from "./chat/AgentActivityPanel";
+import { effectiveComposerSkills } from "../capabilityComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -1734,6 +1736,7 @@ function ChatViewContent(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const capabilities = serverConfig?.capabilities ?? EMPTY_T3_CAPABILITY_SNAPSHOT;
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
     selectedProviderByThreadId ?? threadProvider ?? ProviderDriverKind.make("codex"),
@@ -2191,6 +2194,14 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const activeTimelineSkills = useMemo(
+    () =>
+      effectiveComposerSkills({
+        capabilities,
+        selectedProviderStatus: activeProviderStatus,
+      }),
+    [activeProviderStatus, capabilities],
+  );
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -4957,7 +4968,7 @@ function ChatViewContent(props: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                skills={activeTimelineSkills ?? EMPTY_PROVIDER_SKILLS}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
@@ -5052,6 +5063,7 @@ function ChatViewContent(props: ChatViewProps) {
                       interactionMode={interactionMode}
                       lockedProvider={lockedProvider}
                       providerStatuses={providerStatuses as ServerProvider[]}
+                      capabilities={capabilities}
                       activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
                       activeThreadModelSelection={activeThread?.modelSelection}
                       activeThreadActivities={activeThread?.activities}
@@ -5062,6 +5074,9 @@ function ChatViewContent(props: ChatViewProps) {
                       terminalOpen={Boolean(terminalUiState.terminalOpen)}
                       gitCwd={gitCwd}
                       promptRef={promptRef}
+                      onOpenToolRegistry={() => {
+                        void navigate({ to: "/settings/tools" });
+                      }}
                       composerImagesRef={composerImagesRef}
                       composerTerminalContextsRef={composerTerminalContextsRef}
                       composerElementContextsRef={composerElementContextsRef}

@@ -965,6 +965,81 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.toolLifecycleStatus).toBe("failed");
   });
 
+  it("preserves lower-harness capability provenance on work log entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "opencode-subagent-started",
+        kind: "tool.started",
+        summary: "Task",
+        tone: "tool",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          capabilityId: "harness:opencode:subagent:task",
+          capabilityKind: "subagent",
+          capabilitySource: "harness-native",
+          providerInstanceId: "opencode",
+          harnessName: "OpenCode",
+        },
+      }),
+      makeActivity({
+        id: "opencode-subagent-completed",
+        kind: "tool.completed",
+        summary: "Task",
+        tone: "tool",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "completed",
+          capabilityId: "harness:opencode:subagent:task",
+          capabilityKind: "subagent",
+          capabilitySource: "harness-native",
+          providerInstanceId: "opencode",
+          harnessName: "OpenCode",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      id: "opencode-subagent-completed",
+      itemType: "collab_agent_tool_call",
+      capabilityId: "harness:opencode:subagent:task",
+      capabilityKind: "subagent",
+      capabilitySource: "harness-native",
+      capabilityProviderInstanceId: "opencode",
+      capabilityHarnessName: "OpenCode",
+    });
+  });
+
+  it("preserves T3 subagent start provenance on work log entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "t3-subagent-started",
+        kind: "t3.subagent.started",
+        summary: "Explore subagent started",
+        tone: "tool",
+        payload: {
+          capabilityId: "t3:subagent:explore",
+          capabilityKind: "subagent",
+          capabilitySource: "t3",
+          toolName: "t3_subagent",
+          subagentType: "explore",
+          childThreadId: "thread-child",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      id: "t3-subagent-started",
+      label: "Explore subagent started",
+      sourceActivityKind: "t3.subagent.started",
+      capabilityId: "t3:subagent:explore",
+      capabilityKind: "subagent",
+      capabilitySource: "t3",
+    });
+  });
+
   it("defaults tool.completed entries to completed lifecycle status", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

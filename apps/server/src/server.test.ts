@@ -4318,11 +4318,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (first?.type === "snapshot") {
         assert.deepEqual(first.config.providers, []);
       }
-      assert.deepEqual(second, {
-        version: 1,
-        type: "providerStatuses",
-        payload: { providers: nextProviders },
-      });
+      assert.equal(second?.type, "providerStatuses");
+      if (second?.type === "providerStatuses") {
+        assert.deepEqual(second.payload.providers, nextProviders);
+        const capabilities = second.payload.capabilities;
+        if (!capabilities) {
+          assert.fail("expected provider status update to include capabilities");
+        }
+        assert.deepEqual(
+          capabilities.capabilities.map((capability) => capability.id),
+          [
+            "t3:command:tools",
+            "t3:subagent:explore",
+            "t3:subagent:implement",
+            "t3:subagent:review",
+            "t3:tool:subagent",
+          ],
+        );
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

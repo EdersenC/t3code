@@ -11,7 +11,9 @@ import {
   stripOllamaCloudModelSuffix,
 } from "@t3tools/shared/model";
 
+import type { OpenCodeCapabilityRuntime } from "../capabilities/T3CapabilityRegistry.ts";
 import { normalizeOllamaBaseUrl, type OllamaRunningModel } from "./ollamaApi.ts";
+import { openCodeCapabilityConfigFragment } from "./opencodeCapabilities.ts";
 
 export const OLLAMA_OPENCODE_PROVIDER_ID = "ollama";
 export const OLLAMA_OPENCODE_PROVIDER_NAME = "Ollama (local)";
@@ -264,6 +266,7 @@ export function buildOllamaOpenCodeConfig(input: {
   readonly settings: Pick<OllamaSettings, "baseUrl" | "customModels">;
   readonly modelIds: ReadonlyArray<string>;
   readonly modelSelection?: ModelSelection | undefined;
+  readonly capabilityRuntime?: Pick<OpenCodeCapabilityRuntime, "skillPaths" | "skillPermissions">;
 }): string {
   const modelIds =
     input.modelIds.length > 0
@@ -290,6 +293,7 @@ export function buildOllamaOpenCodeConfig(input: {
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     ...(defaultModelSlug ? { model: defaultModelSlug } : {}),
+    ...openCodeCapabilityConfigFragment(input),
     provider: {
       [OLLAMA_OPENCODE_PROVIDER_ID]: {
         npm: OLLAMA_OPENAI_COMPATIBLE_PACKAGE,

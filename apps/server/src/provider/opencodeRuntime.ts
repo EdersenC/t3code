@@ -1,6 +1,7 @@
 import * as NodeURL from "node:url";
 
 import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
+import type { OpenCodeCapabilityRuntime } from "../capabilities/T3CapabilityRegistry.ts";
 import {
   createOpencodeClient,
   type Agent,
@@ -217,12 +218,24 @@ export function toOpenCodeFileParts(input: {
   return parts;
 }
 
-export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): PermissionRuleset {
+export function buildOpenCodePermissionRules(
+  runtimeMode: RuntimeMode,
+  capabilityRuntime?: Pick<OpenCodeCapabilityRuntime, "skillPermissions">,
+): PermissionRuleset {
+  const skillPermissionRules = Object.entries(capabilityRuntime?.skillPermissions ?? {}).map(
+    ([pattern, action]) => ({
+      permission: "skill",
+      pattern,
+      action,
+    }),
+  );
+
   if (runtimeMode === "full-access") {
-    return [{ permission: "*", pattern: "*", action: "allow" }];
+    return [...skillPermissionRules, { permission: "*", pattern: "*", action: "allow" }];
   }
 
   return [
+    ...skillPermissionRules,
     { permission: "*", pattern: "*", action: "ask" },
     { permission: "bash", pattern: "*", action: "ask" },
     { permission: "edit", pattern: "*", action: "ask" },
