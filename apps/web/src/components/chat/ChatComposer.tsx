@@ -9,6 +9,7 @@ import type {
   RuntimeMode,
   ScopedThreadRef,
   ServerProvider,
+  T3CapabilitySnapshot,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -78,6 +79,13 @@ import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
+  capabilityProviderKey,
+  capabilitySourceDescription,
+  effectiveComposerSkills,
+  providerCommandCapabilities,
+  t3CommandCapabilities,
+} from "../../capabilityComposer";
+import {
   getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
@@ -85,6 +93,10 @@ import {
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
+import {
+  composerControlTriggerClassName,
+  composerControlActiveClassName,
+} from "./composerControlStyles";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
@@ -93,6 +105,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
+  ArrowUpIcon,
   BotIcon,
   CircleAlertIcon,
   ListTodoIcon,
@@ -221,10 +234,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             <Button
               variant="ghost"
               className={cn(
-                "shrink-0 whitespace-nowrap px-2 sm:px-3",
-                props.interactionMode === "plan"
-                  ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/15 hover:text-blue-300"
-                  : "text-muted-foreground/70 hover:text-foreground/80",
+                composerControlTriggerClassName,
+                props.interactionMode === "plan" ? composerControlActiveClassName : null,
               )}
               size="sm"
               type="button"
@@ -261,7 +272,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
               <SelectTrigger
                 variant="ghost"
                 size="sm"
-                className="font-medium"
+                className={cn(composerControlTriggerClassName, "font-medium")}
                 aria-label="Runtime mode"
               />
             }
@@ -303,10 +314,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
                 <Button
                   variant="ghost"
                   className={cn(
-                    "shrink-0 whitespace-nowrap px-2 sm:px-3",
-                    props.planSidebarOpen
-                      ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/15 hover:text-blue-300"
-                      : "text-muted-foreground/70 hover:text-foreground/80",
+                    composerControlTriggerClassName,
+                    props.planSidebarOpen ? composerControlActiveClassName : null,
                   )}
                   size="sm"
                   type="button"
@@ -489,12 +498,14 @@ export interface ChatComposerProps {
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
   providerStatuses: ServerProvider[];
+  capabilities: T3CapabilitySnapshot | null;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
 
   // Context window
   activeThreadActivities: Thread["activities"] | undefined;
   projectModelAnalytics: ModelAnalyticsRollup | null;
+  promptSuggestion: string | null;
 
   // Misc
   resolvedTheme: "light" | "dark";
@@ -512,6 +523,7 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
+  onOpenToolRegistry: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -582,6 +594,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     interactionMode,
     lockedProvider,
     providerStatuses,
+    capabilities,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
     activeThreadActivities,
@@ -597,6 +610,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContextsRef,
     composerElementContextsRef,
     onSend,
+    onOpenToolRegistry,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -792,6 +806,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
+  );
+  const effectiveSkills = useMemo(
+    () => effectiveComposerSkills({ capabilities, selectedProviderStatus }),
+    [capabilities, selectedProviderStatus],
   );
 
   const composerPromptInjectionState = useMemo(
@@ -1012,30 +1030,79 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: command.description ?? command.input?.hint ?? "Run provider command",
         }),
       );
+      const providerCommandNames = new Set(
+        providerSlashCommandItems.map((item) => item.command.name.toLowerCase()),
+      );
+      const providerCapabilityItems = providerCommandCapabilities({
+        capabilities,
+        selectedProviderStatus,
+      })
+        .filter((capability) => {
+          const commandName = capability.commandName ?? capability.name;
+          if (providerCommandNames.has(commandName.toLowerCase())) return false;
+          providerCommandNames.add(commandName.toLowerCase());
+          return true;
+        })
+        .map((capability) => {
+          const commandName = capability.commandName ?? capability.name;
+          return {
+            id: `capability-provider-slash-command:${capability.id}`,
+            type: "provider-slash-command" as const,
+            provider: capabilityProviderKey(selectedProvider, capability),
+            command: {
+              name: commandName,
+              ...(capability.description ? { description: capability.description } : {}),
+            },
+            label: `/${commandName}`,
+            description: capabilitySourceDescription(capability),
+          };
+        });
+      const t3CommandItems = t3CommandCapabilities({ capabilities }).map((capability) => {
+        const commandName = capability.commandName ?? capability.name;
+        return {
+          id: `capability-slash-command:${capability.id}`,
+          type: "capability-slash-command" as const,
+          capability,
+          commandName,
+          label: `/${commandName}`,
+          description: capabilitySourceDescription(capability),
+          sourceLabel: "T3",
+        };
+      });
       const query = composerTrigger.query.trim().toLowerCase();
-      const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
+      const slashCommandItems = [
+        ...builtInSlashCommandItems,
+        ...t3CommandItems,
+        ...providerSlashCommandItems,
+        ...providerCapabilityItems,
+      ];
       if (!query) {
         return slashCommandItems;
       }
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }),
-      );
+      return searchProviderSkills(effectiveSkills, composerTrigger.query).map((skill) => ({
+        id: `skill:${selectedProvider}:${skill.name}`,
+        type: "skill" as const,
+        provider: selectedProvider,
+        skill,
+        label: formatProviderSkillDisplayName(skill),
+        description:
+          skill.shortDescription ??
+          skill.description ??
+          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+      }));
     }
     return [];
-  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries.entries]);
+  }, [
+    capabilities,
+    composerTrigger,
+    effectiveSkills,
+    selectedProvider,
+    selectedProviderStatus,
+    workspaceEntries.entries,
+  ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1682,6 +1749,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
+      if (item.type === "capability-slash-command") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          focusEditorAfterReplace: false,
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          if (item.commandName === "tools") {
+            onOpenToolRegistry();
+          }
+        }
+        return;
+      }
       if (item.type === "skill") {
         const replacement = `$${item.skill.name} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -1705,6 +1785,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       applyPromptReplacement,
       clearCurrentComposerDraft,
       handleInteractionModeChange,
+      onOpenToolRegistry,
       resolveActiveComposerTrigger,
     ],
   );
@@ -2120,12 +2201,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     <form
       ref={composerFormRef}
       onSubmit={submitComposer}
-      className="mx-auto w-full min-w-0 max-w-208"
+      className="mx-auto w-full min-w-0 max-w-216"
       data-chat-composer-form="true"
     >
       <div
         className={cn(
-          "group rounded-[22px] p-px transition-colors duration-200",
+          "group rounded-[28px] p-px transition-colors duration-200",
           composerProviderState.composerFrameClassName,
         )}
         onDragEnter={onComposerDragEnter}
@@ -2137,8 +2218,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ref={composerSurfaceRef}
           data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
           className={cn(
-            "chat-composer-glass rounded-[20px] border transition-colors duration-200 has-focus-visible:border-ring/45",
-            isDragOverComposer ? "border-primary/70 bg-accent/45" : "border-border",
+            "chat-composer-glass chat-composer-shared-blur rounded-[26px] border transition-all duration-200 has-focus-visible:border-ring/45",
+            isDragOverComposer ? "border-primary/70 bg-accent/45" : "border-border/70",
             environmentUnavailable ? "opacity-75" : null,
             composerProviderState.composerSurfaceClassName,
           )}
@@ -2286,7 +2367,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </button>
               <button
                 type="button"
-                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/90 text-primary-foreground disabled:opacity-30"
+                className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-md shadow-foreground/18 disabled:opacity-30"
                 disabled={collapsedComposerPrimaryActionDisabled}
                 aria-label={collapsedComposerPrimaryActionLabel}
                 onPointerDown={(event) => event.preventDefault()}
@@ -2295,23 +2376,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   submitComposer();
                 }}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path
-                    d="M8 3L8 13M8 3L4 7M8 3L12 7"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <ArrowUpIcon className="size-4 stroke-[2.2]" aria-hidden="true" />
               </button>
             </div>
           ) : null}
 
           <div
             className={cn(
-              "relative px-3 pb-2 sm:px-4",
-              hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
+              "relative px-4 pb-1 sm:px-5",
+              hasComposerHeader ? "pt-3 sm:pt-3.5" : "pt-4 sm:pt-5",
               isComposerCollapsedMobile && "hidden",
             )}
           >
@@ -2472,7 +2545,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ? composerTerminalContexts
                     : []
                 }
-                skills={selectedProviderStatus?.skills ?? []}
+                skills={effectiveSkills}
                 {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}
@@ -2491,7 +2564,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             )}`
                           : phase === "disconnected"
                             ? "Ask for follow-up changes or attach images"
-                            : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                            : (props.promptSuggestion ??
+                              "Ask anything, @tag files/folders, $use skills, or / for commands")
                 }
                 disabled={
                   isConnecting ||
@@ -2539,13 +2613,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               data-chat-composer-footer="true"
               data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
               className={cn(
-                "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                "chat-composer-control-rail mx-2 mb-2 flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible rounded-[20px] border border-border/45 px-1.5 py-1.5 sm:mx-2.5 sm:mb-2.5",
                 pendingUserInputs.length > 0 && "pt-2",
                 isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                 showMobilePendingAnswerActions && "hidden sm:flex",
               )}
             >
-              <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 <ProviderModelPicker
                   compact={isComposerFooterCompact}
                   activeInstanceId={selectedInstanceId}
@@ -2562,6 +2636,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         activeProviderIconClassName: composerProviderState.modelPickerIconClassName,
                       }
                     : {})}
+                  triggerClassName={cn(
+                    composerControlTriggerClassName,
+                    isComposerFooterCompact ? "max-w-42" : "max-w-48 sm:max-w-60",
+                  )}
                   onOpenChange={(open) => {
                     setIsComposerModelPickerOpen(open);
                   }}

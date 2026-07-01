@@ -1,5 +1,6 @@
 import {
   type ApprovalRequestId,
+  EMPTY_T3_CAPABILITY_SNAPSHOT,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
   type EnvironmentId,
@@ -205,9 +206,12 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { AgentActivityPanel } from "./chat/AgentActivityPanel";
+import { effectiveComposerSkills } from "../capabilityComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { buildProjectPromptSuggestion } from "./chat/promptSuggestions";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
@@ -1732,6 +1736,7 @@ function ChatViewContent(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const capabilities = serverConfig?.capabilities ?? EMPTY_T3_CAPABILITY_SNAPSHOT;
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
     selectedProviderByThreadId ?? threadProvider ?? ProviderDriverKind.make("codex"),
@@ -1830,6 +1835,37 @@ function ChatViewContent(props: ChatViewProps) {
     activeLatestTurn,
     activeThread?.session ?? null,
     localDispatchStartedAt,
+  );
+  const activeProjectPromptName = useMemo(() => {
+    if (activeProject?.title?.trim()) {
+      return activeProject.title.trim();
+    }
+    const workspaceRoot = activeProject?.workspaceRoot;
+    if (!workspaceRoot) {
+      return null;
+    }
+    const parts = workspaceRoot.split(/[\\/]+/).filter(Boolean);
+    return parts.at(-1) ?? workspaceRoot;
+  }, [activeProject?.title, activeProject?.workspaceRoot]);
+  const freshThreadPromptSuggestion = useMemo(() => {
+    if (!settings.chatPromptSuggestions) {
+      return null;
+    }
+    return buildProjectPromptSuggestion({
+      projectName: activeProjectPromptName,
+      seed: `${activeThread?.id ?? routeThreadKey}:${activeProjectPromptName ?? "project"}`,
+    });
+  }, [activeProjectPromptName, activeThread?.id, routeThreadKey, settings.chatPromptSuggestions]);
+  const shouldCenterFreshComposer = Boolean(
+    activeThread &&
+    settings.chatStartComposerPlacement === "center" &&
+    activeThread.messages.length === 0 &&
+    !isWorking &&
+    !activePendingApproval &&
+    pendingUserInputs.length === 0 &&
+    !showPlanFollowUpPrompt &&
+    !terminalUiState.terminalOpen &&
+    !rightPanelOpen,
   );
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
@@ -2158,6 +2194,14 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const activeTimelineSkills = useMemo(
+    () =>
+      effectiveComposerSkills({
+        capabilities,
+        selectedProviderStatus: activeProviderStatus,
+      }),
+    [activeProviderStatus, capabilities],
+  );
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -2788,6 +2832,10 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
+  const addActivitySurface = useCallback(() => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().open(activeThreadRef, "activity");
+  }, [activeThreadRef]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
@@ -4782,6 +4830,14 @@ function ChatViewContent(props: ChatViewProps) {
       <Suspense fallback={null}>
         <DiffPanel mode="embedded" composerDraftTarget={composerDraftTarget} />
       </Suspense>
+    ) : activeRightPanelSurface?.kind === "activity" ? (
+      <AgentActivityPanel
+        workLogEntries={workLogEntries}
+        threadActivities={threadActivities}
+        latestTurn={activeLatestTurn}
+        activeTurnInProgress={isWorking || !latestTurnSettled}
+        workspaceRoot={activeWorkspaceRoot}
+      />
     ) : activeRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar
         activePlan={activePlan}
@@ -4820,7 +4876,10 @@ function ChatViewContent(props: ChatViewProps) {
   ) : null;
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div
+      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      style={{ background: "var(--app-chat-background)" }}
+    >
       {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -4884,6 +4943,7 @@ function ChatViewContent(props: ChatViewProps) {
               <MessagesTimeline
                 key={activeThread.id}
                 isWorking={isWorking}
+                activityCopyStyle={settings.agentActivityCopyStyle}
                 activeTurnInProgress={isWorking || !latestTurnSettled}
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
@@ -4899,6 +4959,7 @@ function ChatViewContent(props: ChatViewProps) {
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
+                onOpenActivityPanel={addActivitySurface}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
                 isRevertingCheckpoint={isRevertingCheckpoint}
@@ -4907,7 +4968,7 @@ function ChatViewContent(props: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                skills={activeTimelineSkills ?? EMPTY_PROVIDER_SKILLS}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
@@ -4937,21 +4998,36 @@ function ChatViewContent(props: ChatViewProps) {
             <div
               ref={setComposerOverlayElement}
               data-chat-composer-overlay="true"
-              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
+              className={cn(
+                "pointer-events-none absolute inset-x-0 z-20 transition-[top,bottom,transform] duration-300 ease-out motion-reduce:transition-none",
+                shouldCenterFreshComposer ? "top-1/2 -translate-y-1/2" : "bottom-0 pt-1.5 sm:pt-2",
+              )}
             >
-              <div
-                aria-hidden="true"
-                className="chat-composer-horizontal-inset pointer-events-none absolute inset-x-0 top-1.5 bottom-0 z-0 sm:top-2"
-              >
-                <div className="relative mx-auto h-full w-full max-w-208 overflow-clip rounded-t-[20px]">
-                  <div className="chat-composer-shared-blur absolute -inset-8" />
+              {!shouldCenterFreshComposer ? (
+                <div
+                  aria-hidden="true"
+                  className="chat-composer-horizontal-inset pointer-events-none absolute inset-x-0 top-1.5 bottom-0 z-0 sm:top-2"
+                >
+                  <div className="relative mx-auto h-full w-full max-w-208 overflow-clip rounded-t-[20px]">
+                    <div className="chat-composer-shared-blur absolute -inset-8" />
+                  </div>
                 </div>
-              </div>
+              ) : null}
               <div className="chat-composer-horizontal-inset">
                 <div className="pointer-events-auto relative z-10 isolate">
+                  {shouldCenterFreshComposer && freshThreadPromptSuggestion ? (
+                    <div className="mx-auto mb-4 max-w-2xl px-2 text-center text-balance font-medium text-foreground/80 text-sm sm:text-base">
+                      {freshThreadPromptSuggestion}
+                    </div>
+                  ) : null}
                   <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   <div className="relative z-10">
                     <ChatComposer
+                      promptSuggestion={
+                        !shouldCenterFreshComposer && activeThread.messages.length === 0
+                          ? freshThreadPromptSuggestion
+                          : null
+                      }
                       composerRef={composerRef}
                       composerDraftTarget={composerDraftTarget}
                       environmentId={environmentId}
@@ -4987,6 +5063,7 @@ function ChatViewContent(props: ChatViewProps) {
                       interactionMode={interactionMode}
                       lockedProvider={lockedProvider}
                       providerStatuses={providerStatuses as ServerProvider[]}
+                      capabilities={capabilities}
                       activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
                       activeThreadModelSelection={activeThread?.modelSelection}
                       activeThreadActivities={activeThread?.activities}
@@ -4997,6 +5074,9 @@ function ChatViewContent(props: ChatViewProps) {
                       terminalOpen={Boolean(terminalUiState.terminalOpen)}
                       gitCwd={gitCwd}
                       promptRef={promptRef}
+                      onOpenToolRegistry={() => {
+                        void navigate({ to: "/settings/tools" });
+                      }}
                       composerImagesRef={composerImagesRef}
                       composerTerminalContextsRef={composerTerminalContextsRef}
                       composerElementContextsRef={composerElementContextsRef}
@@ -5125,6 +5205,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddActivity={addActivitySurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
@@ -5152,6 +5233,7 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddActivity={addActivitySurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}

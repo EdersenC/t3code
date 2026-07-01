@@ -284,6 +284,16 @@ function itemDetail(item: CodexLifecycleItem): string | undefined {
   return undefined;
 }
 
+function codexHarnessSubagentProvenance(itemType: CanonicalItemType, item?: CodexLifecycleItem) {
+  if (itemType !== "collab_agent_tool_call") return {};
+  return {
+    capabilityId: `harness:codex:subagent:${item?.type ?? "collab"}`,
+    capabilityKind: "subagent" as const,
+    capabilitySource: "harness-native" as const,
+    harnessName: "Codex",
+  };
+}
+
 function toRequestTypeFromMethod(method: string): CanonicalRequestType {
   switch (method) {
     case "item/commandExecution/requestApproval":
@@ -481,6 +491,7 @@ function mapItemLifecycle(
       ...(status ? { status } : {}),
       ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
       ...(detail ? { detail } : {}),
+      ...codexHarnessSubagentProvenance(itemType, item),
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
   };
@@ -1404,16 +1415,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(serviceTier ? { serviceTier } : {}),
           ...(mcpSession
             ? {
-                environment: {
-                  ...(options?.environment ?? process.env),
-                  T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
-                },
-                appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-                ],
+                environment: McpProviderSession.codexMcpEnvironment(
+                  mcpSession,
+                  options?.environment ?? process.env,
+                ),
+                appServerArgs: McpProviderSession.codexMcpAppServerArgs(mcpSession),
               }
             : {}),
         };

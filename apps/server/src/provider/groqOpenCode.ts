@@ -1,6 +1,8 @@
 import { DEFAULT_GROQ_MODEL, type GroqSettings } from "@t3tools/contracts";
 
+import type { OpenCodeCapabilityRuntime } from "../capabilities/T3CapabilityRegistry.ts";
 import { normalizeGroqBaseUrl, resolveGroqApiKey, type GroqModel } from "./groqApi.ts";
+import { openCodeCapabilityConfigFragment } from "./opencodeCapabilities.ts";
 
 export const GROQ_OPENCODE_PROVIDER_ID = "groq";
 export const GROQ_OPENCODE_PROVIDER_NAME = "Groq";
@@ -375,6 +377,7 @@ export function buildGroqOpenCodeConfig(input: {
   readonly settings: Pick<GroqSettings, "apiKey" | "baseUrl" | "customModels">;
   readonly modelIds: ReadonlyArray<string | GroqModel>;
   readonly environment?: NodeJS.ProcessEnv | undefined;
+  readonly capabilityRuntime?: Pick<OpenCodeCapabilityRuntime, "skillPaths" | "skillPermissions">;
 }): string {
   const modelById = new Map<string, GroqModel>();
   for (const candidate of input.modelIds) {
@@ -407,6 +410,7 @@ export function buildGroqOpenCodeConfig(input: {
     $schema: "https://opencode.ai/config.json",
     ...(defaultModelSlug ? { model: defaultModelSlug } : {}),
     ...(smallModelSlug ? { small_model: smallModelSlug } : {}),
+    ...openCodeCapabilityConfigFragment(input),
     agent: {
       build: {
         steps: 2,

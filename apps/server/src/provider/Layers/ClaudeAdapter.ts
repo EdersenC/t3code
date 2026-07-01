@@ -879,6 +879,21 @@ function titleForTool(itemType: CanonicalItemType): string {
   }
 }
 
+function harnessSubagentProvenance(input: {
+  readonly itemType: CanonicalItemType;
+  readonly toolName: string;
+  readonly providerInstanceId?: ProviderInstanceId | undefined;
+}) {
+  if (input.itemType !== "collab_agent_tool_call") return {};
+  return {
+    capabilityId: `harness:claude:subagent:${input.toolName}`,
+    capabilityKind: "subagent" as const,
+    capabilitySource: "harness-native" as const,
+    ...(input.providerInstanceId ? { providerInstanceId: input.providerInstanceId } : {}),
+    harnessName: "Claude",
+  };
+}
+
 const SUPPORTED_CLAUDE_IMAGE_MIME_TYPES = new Set([
   "image/gif",
   "image/jpeg",
@@ -1996,6 +2011,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: status === "completed" ? "completed" : "failed",
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
+          ...harnessSubagentProvenance({
+            itemType: tool.itemType,
+            toolName: tool.toolName,
+            providerInstanceId: context.session.providerInstanceId,
+          }),
           data: {
             toolName: tool.toolName,
             input: tool.input,
@@ -2203,6 +2223,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             status: "inProgress",
             title: nextTool.title,
             ...(nextTool.detail ? { detail: nextTool.detail } : {}),
+            ...harnessSubagentProvenance({
+              itemType: nextTool.itemType,
+              toolName: nextTool.toolName,
+              providerInstanceId: context.session.providerInstanceId,
+            }),
             data: {
               toolName: nextTool.toolName,
               input: nextTool.input,
@@ -2298,6 +2323,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: "inProgress",
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
+          ...harnessSubagentProvenance({
+            itemType: tool.itemType,
+            toolName: tool.toolName,
+            providerInstanceId: context.session.providerInstanceId,
+          }),
           data: {
             toolName: tool.toolName,
             input: toolInput,
@@ -2376,6 +2406,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: toolResult.isError ? "failed" : "inProgress",
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
+          ...harnessSubagentProvenance({
+            itemType: tool.itemType,
+            toolName: tool.toolName,
+            providerInstanceId: context.session.providerInstanceId,
+          }),
           data: toolData,
         },
         providerRefs: nativeProviderRefs(context, {
@@ -2428,6 +2463,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: itemStatus,
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
+          ...harnessSubagentProvenance({
+            itemType: tool.itemType,
+            toolName: tool.toolName,
+            providerInstanceId: context.session.providerInstanceId,
+          }),
           data: toolData,
         },
         providerRefs: nativeProviderRefs(context, {
@@ -3467,15 +3507,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession
           ? {
-              mcpServers: {
-                "t3-code": {
-                  type: "http",
-                  url: mcpSession.endpoint,
-                  headers: {
-                    Authorization: mcpSession.authorizationHeader,
-                  },
-                },
-              },
+              mcpServers: McpProviderSession.claudeMcpServers(mcpSession),
             }
           : {}),
       };

@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+  EMPTY_T3_CAPABILITY_SNAPSHOT,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthReviewWriteScope,
@@ -63,6 +64,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
+import { loadT3CapabilityRegistryEffect } from "./capabilities/T3CapabilityRegistry.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
@@ -933,6 +935,14 @@ const makeWsRpcLayer = (
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
         );
+        const capabilities = yield* loadT3CapabilityRegistryEffect({
+          settings,
+          providers,
+          cwd: config.cwd,
+        }).pipe(
+          Effect.map((registry) => registry.snapshot),
+          Effect.orElseSucceed(() => EMPTY_T3_CAPABILITY_SNAPSHOT),
+        );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
 
@@ -956,6 +966,7 @@ const makeWsRpcLayer = (
             otlpMetricsEnabled: config.otlpMetricsUrl !== undefined,
           },
           settings,
+          capabilities,
         };
       });
 
@@ -1766,20 +1777,48 @@ const makeWsRpcLayer = (
                 })),
               );
               const providerStatuses = providerRegistry.streamChanges.pipe(
-                Stream.map((providers) => ({
-                  version: 1 as const,
-                  type: "providerStatuses" as const,
-                  payload: { providers },
-                })),
+                Stream.mapEffect((providers) =>
+                  Effect.gen(function* () {
+                    const settings = ServerSettings.redactServerSettingsForClient(
+                      yield* serverSettings.getSettings,
+                    );
+                    const capabilities = yield* loadT3CapabilityRegistryEffect({
+                      settings,
+                      providers,
+                      cwd: config.cwd,
+                    }).pipe(
+                      Effect.map((registry) => registry.snapshot),
+                      Effect.orElseSucceed(() => EMPTY_T3_CAPABILITY_SNAPSHOT),
+                    );
+                    return {
+                      version: 1 as const,
+                      type: "providerStatuses" as const,
+                      payload: { providers, capabilities },
+                    };
+                  }),
+                ),
                 Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
               const settingsUpdates = serverSettings.streamChanges.pipe(
                 Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
-                Stream.map((settings) => ({
-                  version: 1 as const,
-                  type: "settingsUpdated" as const,
-                  payload: { settings },
-                })),
+                Stream.mapEffect((settings) =>
+                  Effect.gen(function* () {
+                    const providers = yield* providerRegistry.getProviders;
+                    const capabilities = yield* loadT3CapabilityRegistryEffect({
+                      settings,
+                      providers,
+                      cwd: config.cwd,
+                    }).pipe(
+                      Effect.map((registry) => registry.snapshot),
+                      Effect.orElseSucceed(() => EMPTY_T3_CAPABILITY_SNAPSHOT),
+                    );
+                    return {
+                      version: 1 as const,
+                      type: "settingsUpdated" as const,
+                      payload: { settings, capabilities },
+                    };
+                  }),
+                ),
               );
 
               yield* providerRegistry

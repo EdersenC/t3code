@@ -18,6 +18,8 @@ const decodeJson = Schema.decodeUnknownSync(Schema.UnknownFromJsonString);
 type GroqOpenCodeConfig = {
   readonly model: string;
   readonly small_model: string;
+  readonly skills?: { readonly paths: ReadonlyArray<string> };
+  readonly permission?: { readonly skill: Readonly<Record<string, "allow" | "deny">> };
   readonly agent: {
     readonly build: { readonly steps: number };
     readonly plan: { readonly steps: number };
@@ -90,6 +92,32 @@ describe("Groq OpenCode config helpers", () => {
       "openai/gpt-oss-120b",
       "llama-3.3-70b-versatile",
     ]);
+  });
+
+  it("adds shared T3 capability runtime config", () => {
+    const config = decodeJson(
+      buildGroqOpenCodeConfig({
+        settings: {
+          apiKey: "",
+          baseUrl: "https://api.groq.com/openai/v1/",
+          customModels: [DEFAULT_GROQ_MODEL],
+        },
+        modelIds: ["openai/gpt-oss-120b"],
+        capabilityRuntime: {
+          skillPaths: ["/tmp/t3-skills"],
+          skillPermissions: {
+            "customize-opencode": "allow",
+            "legacy-hidden-skill": "deny",
+          },
+        },
+      }),
+    ) as GroqOpenCodeConfig;
+
+    expect(config.skills?.paths).toEqual(["/tmp/t3-skills"]);
+    expect(config.permission?.skill).toEqual({
+      "customize-opencode": "allow",
+      "legacy-hidden-skill": "deny",
+    });
   });
 
   it("keeps OpenCode-compatible Groq models and filters known unsupported agent models", () => {

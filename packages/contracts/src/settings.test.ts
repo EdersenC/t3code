@@ -49,11 +49,21 @@ describe("ClientSettings personalization", () => {
     expect(decoded.interfaceDensity).toBe(DEFAULT_CLIENT_SETTINGS.interfaceDensity);
     expect(decoded.interfaceContrast).toBe(DEFAULT_CLIENT_SETTINGS.interfaceContrast);
     expect(decoded.backgroundTexture).toBe(DEFAULT_CLIENT_SETTINGS.backgroundTexture);
+    expect(decoded.agentActivityCopyStyle).toBe(DEFAULT_CLIENT_SETTINGS.agentActivityCopyStyle);
+    expect(decoded.chatPromptSuggestions).toBe(DEFAULT_CLIENT_SETTINGS.chatPromptSuggestions);
+    expect(decoded.chatStartComposerPlacement).toBe(
+      DEFAULT_CLIENT_SETTINGS.chatStartComposerPlacement,
+    );
+    expect(decoded.chatSurfaceStyle).toBe(DEFAULT_CLIENT_SETTINGS.chatSurfaceStyle);
   });
 
   it("accepts personalization patches", () => {
     const patch = decodeClientSettingsPatch({
+      agentActivityCopyStyle: "plain",
       backgroundTexture: "visible",
+      chatPromptSuggestions: false,
+      chatStartComposerPlacement: "bottom",
+      chatSurfaceStyle: "crisp",
       customUiAccentColor: "  #123abc  ",
       customUiSecondaryColor: "abc",
       interfaceContrast: "high",
@@ -67,7 +77,11 @@ describe("ClientSettings personalization", () => {
     });
 
     expect(patch).toEqual({
+      agentActivityCopyStyle: "plain",
       backgroundTexture: "visible",
+      chatPromptSuggestions: false,
+      chatStartComposerPlacement: "bottom",
+      chatSurfaceStyle: "crisp",
       customUiAccentColor: "#123abc",
       customUiSecondaryColor: "#aabbcc",
       interfaceContrast: "high",
@@ -178,6 +192,44 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
         providerInstances: { "1bad": { driver: "codex" } },
       }),
     ).toThrow();
+  });
+});
+
+describe("ServerSettings.capabilityRegistry", () => {
+  it("defaults capability registry settings for legacy server configs", () => {
+    expect(DEFAULT_SERVER_SETTINGS.capabilityRegistry).toEqual({
+      skillRoots: [],
+      overrides: {},
+    });
+
+    expect(decodeServerSettings({}).capabilityRegistry).toEqual({
+      skillRoots: [],
+      overrides: {},
+    });
+  });
+
+  it("decodes skill roots and capability overrides from patches", () => {
+    const patch = decodeServerSettingsPatch({
+      capabilityRegistry: {
+        skillRoots: ["  .t3/skills  "],
+        overrides: {
+          "t3:subagent:review": {
+            enabled: false,
+            activation: "hidden",
+          },
+        },
+      },
+    });
+
+    expect(patch.capabilityRegistry).toEqual({
+      skillRoots: [".t3/skills"],
+      overrides: {
+        "t3:subagent:review": {
+          enabled: false,
+          activation: "hidden",
+        },
+      },
+    });
   });
 });
 

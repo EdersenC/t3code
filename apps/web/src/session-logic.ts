@@ -7,6 +7,8 @@ import {
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   ProviderDriverKind,
+  type T3CapabilityKind,
+  type T3CapabilitySource,
   type ToolLifecycleItemType,
   type UserInputQuestion,
   type ThreadId,
@@ -91,6 +93,11 @@ export interface WorkLogEntry {
   toolTitle?: string;
   toolData?: unknown;
   itemType?: ToolLifecycleItemType;
+  capabilityId?: string;
+  capabilityKind?: T3CapabilityKind;
+  capabilitySource?: T3CapabilitySource;
+  capabilityProviderInstanceId?: string;
+  capabilityHarnessName?: string;
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
@@ -748,6 +755,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activityKind: activity.kind,
   };
   const itemType = extractWorkLogItemType(payload);
+  const capabilityProvenance = extractWorkLogCapabilityProvenance(payload);
   const requestKind = extractWorkLogRequestKind(payload);
   if (detail) {
     entry.detail = detail;
@@ -772,6 +780,21 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (itemType) {
     entry.itemType = itemType;
+  }
+  if (capabilityProvenance.capabilityId) {
+    entry.capabilityId = capabilityProvenance.capabilityId;
+  }
+  if (capabilityProvenance.capabilityKind) {
+    entry.capabilityKind = capabilityProvenance.capabilityKind;
+  }
+  if (capabilityProvenance.capabilitySource) {
+    entry.capabilitySource = capabilityProvenance.capabilitySource;
+  }
+  if (capabilityProvenance.providerInstanceId) {
+    entry.capabilityProviderInstanceId = capabilityProvenance.providerInstanceId;
+  }
+  if (capabilityProvenance.harnessName) {
+    entry.capabilityHarnessName = capabilityProvenance.harnessName;
   }
   if (requestKind) {
     entry.requestKind = requestKind;
@@ -844,6 +867,12 @@ function mergeDerivedWorkLogEntries(
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
+  const capabilityId = next.capabilityId ?? previous.capabilityId;
+  const capabilityKind = next.capabilityKind ?? previous.capabilityKind;
+  const capabilitySource = next.capabilitySource ?? previous.capabilitySource;
+  const capabilityProviderInstanceId =
+    next.capabilityProviderInstanceId ?? previous.capabilityProviderInstanceId;
+  const capabilityHarnessName = next.capabilityHarnessName ?? previous.capabilityHarnessName;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
@@ -857,6 +886,13 @@ function mergeDerivedWorkLogEntries(
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
+    ...(capabilityId ? { capabilityId } : {}),
+    ...(capabilityKind ? { capabilityKind } : {}),
+    ...(capabilitySource ? { capabilitySource } : {}),
+    ...(capabilityProviderInstanceId
+      ? { capabilityProviderInstanceId: capabilityProviderInstanceId }
+      : {}),
+    ...(capabilityHarnessName ? { capabilityHarnessName } : {}),
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolCallId ? { toolCallId } : {}),
@@ -1079,6 +1115,20 @@ function normalizeCommandValue(value: unknown): string | null {
   return formatted ? unwrapKnownShellCommandWrapper(formatted) : null;
 }
 
+function normalizeExecutableArgsCommand(value: unknown): string | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const executable = asTrimmedString(record.executable);
+  if (!executable) {
+    return null;
+  }
+  const executablePart = formatCommandArrayPart(executable);
+  const args = normalizeCommandValue(record.args);
+  return args ? `${executablePart} ${args}` : null;
+}
+
 function toRawToolCommand(value: unknown, normalizedCommand: string | null): string | null {
   const formatted = formatCommandValue(value);
   if (!formatted || normalizedCommand === null) {
@@ -1095,14 +1145,23 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const itemInput = asRecord(item?.input);
-  const itemType = asTrimmedString(payload?.itemType);
-  const detail = asTrimmedString(payload?.detail);
+  const rawInput = asRecord(data?.rawInput);
+  const state = asRecord(data?.state);
+  const toolCall = asRecord(data?.toolCall);
+  const toolCallData = asRecord(toolCall?.data);
   const candidates: unknown[] = [
     item?.command,
     itemInput?.command,
     itemResult?.command,
     data?.command,
-    itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
+    rawInput?.command,
+    normalizeExecutableArgsCommand(rawInput),
+    state?.command,
+    state?.input,
+    toolCall?.command,
+    toolCallData?.command,
+    asRecord(toolCallData?.rawInput)?.command,
+    normalizeExecutableArgsCommand(toolCallData?.rawInput),
   ];
 
   for (const candidate of candidates) {
@@ -1262,6 +1321,41 @@ function extractWorkLogItemType(
     return payload.itemType;
   }
   return undefined;
+}
+
+function extractWorkLogCapabilityProvenance(payload: Record<string, unknown> | null): {
+  readonly capabilityId?: string;
+  readonly capabilityKind?: T3CapabilityKind;
+  readonly capabilitySource?: T3CapabilitySource;
+  readonly providerInstanceId?: string;
+  readonly harnessName?: string;
+} {
+  const capabilityKind =
+    payload?.capabilityKind === "skill" ||
+    payload?.capabilityKind === "slash-command" ||
+    payload?.capabilityKind === "subagent" ||
+    payload?.capabilityKind === "tool"
+      ? payload.capabilityKind
+      : undefined;
+  const capabilitySource =
+    payload?.capabilitySource === "t3" ||
+    payload?.capabilitySource === "provider-native" ||
+    payload?.capabilitySource === "harness-native"
+      ? payload.capabilitySource
+      : undefined;
+  return {
+    ...(asTrimmedString(payload?.capabilityId)
+      ? { capabilityId: asTrimmedString(payload?.capabilityId)! }
+      : {}),
+    ...(capabilityKind ? { capabilityKind } : {}),
+    ...(capabilitySource ? { capabilitySource } : {}),
+    ...(asTrimmedString(payload?.providerInstanceId)
+      ? { providerInstanceId: asTrimmedString(payload?.providerInstanceId)! }
+      : {}),
+    ...(asTrimmedString(payload?.harnessName)
+      ? { harnessName: asTrimmedString(payload?.harnessName)! }
+      : {}),
+  };
 }
 
 function extractWorkLogRequestKind(

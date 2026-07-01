@@ -1,9 +1,10 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ServerProvider } from "./server.ts";
+import { ServerConfig, ServerProvider } from "./server.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const decodeServerConfig = Schema.decodeUnknownSync(ServerConfig);
 
 describe("ServerProvider", () => {
   it("defaults capability arrays when decoding provider snapshots", () => {
@@ -125,5 +126,40 @@ describe("ServerProvider", () => {
     });
 
     expect(parsed.models[0]?.disabledReason).toBe("Ollama Cloud plan does not include this model.");
+  });
+});
+
+describe("ServerConfig capabilities", () => {
+  it("defaults capability snapshot for legacy config payloads", () => {
+    const parsed = decodeServerConfig({
+      environment: {
+        environmentId: "environment-1",
+        label: "Local",
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: "0.0.0-test",
+        capabilities: { repositoryIdentity: true },
+      },
+      auth: {
+        policy: "loopback-browser",
+        bootstrapMethods: ["one-time-token"],
+        sessionMethods: ["browser-session-cookie"],
+        sessionCookieName: "t3_session",
+      },
+      cwd: "/tmp/repo",
+      keybindingsConfigPath: "/tmp/repo/keybindings.json",
+      keybindings: [],
+      issues: [],
+      providers: [],
+      availableEditors: [],
+      observability: {
+        logsDirectoryPath: "/tmp/logs",
+        localTracingEnabled: false,
+        otlpTracesEnabled: false,
+        otlpMetricsEnabled: false,
+      },
+      settings: {},
+    });
+
+    expect(parsed.capabilities).toEqual({ capabilities: [] });
   });
 });

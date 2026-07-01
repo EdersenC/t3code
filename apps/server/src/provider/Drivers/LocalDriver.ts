@@ -36,6 +36,7 @@ import {
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { OpenCodeRuntime } from "../opencodeRuntime.ts";
+import { makeOpenCodeCapabilityRuntimeResolver } from "../opencodeCapabilityRuntimeResolver.ts";
 import {
   buildLocalOpenCodeConfig,
   formatLocalOpenCodeFailureDetail,
@@ -124,9 +125,17 @@ function makeHarnessSettings(settings: LocalSettings): OpenCodeSettings {
   });
 }
 
-function makeConfigContent(settings: LocalSettings, modelSelection?: ModelSelection): string {
+function makeConfigContent(
+  settings: LocalSettings,
+  modelSelection?: ModelSelection,
+  capabilityRuntime?: Parameters<typeof buildLocalOpenCodeConfig>[0]["capabilityRuntime"],
+): string {
   const modelIds = localModelIdsFromCandidates([modelSelection?.model, ...settings.customModels]);
-  return buildLocalOpenCodeConfig({ settings, modelIds });
+  return buildLocalOpenCodeConfig({
+    settings,
+    modelIds,
+    ...(capabilityRuntime ? { capabilityRuntime } : {}),
+  });
 }
 
 export const LocalDriver: ProviderDriver<LocalSettings, LocalDriverEnv> = {
@@ -143,6 +152,8 @@ export const LocalDriver: ProviderDriver<LocalSettings, LocalDriverEnv> = {
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
       const eventLoggers = yield* ProviderEventLoggers;
       const platform = yield* HostProcessPlatform;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -163,6 +174,13 @@ export const LocalDriver: ProviderDriver<LocalSettings, LocalDriverEnv> = {
         platform,
       );
       const openCodeSettings = makeHarnessSettings(effectiveConfig);
+      const resolveCapabilityRuntime = makeOpenCodeCapabilityRuntimeResolver({
+        serverConfig,
+        serverSettings,
+        instanceId,
+        fileSystem,
+        pathService,
+      });
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: runtimeEnvironment,
@@ -191,6 +209,7 @@ export const LocalDriver: ProviderDriver<LocalSettings, LocalDriverEnv> = {
         instanceId,
         environment: runtimeEnvironment,
         configContent,
+        capabilityRuntime: resolveCapabilityRuntime,
         describeErrorDetail: ({ detail, modelSelection }) =>
           describeFailureDetail({ detail, modelSelection }),
         splitInlineThinking: true,
@@ -210,7 +229,10 @@ export const LocalDriver: ProviderDriver<LocalSettings, LocalDriverEnv> = {
         runtimeEnvironment,
         {
           resolveConfigContent: ({ modelSelection }) =>
-            Effect.succeed(makeConfigContent(effectiveConfig, modelSelection)),
+            Effect.gen(function* () {
+              const capabilityRuntime = yield* resolveCapabilityRuntime();
+              return makeConfigContent(effectiveConfig, modelSelection, capabilityRuntime);
+            }),
           describeErrorDetail: ({ detail, modelSelection, emptyOutput }) =>
             describeFailureDetail({ detail, modelSelection, emptyOutput }),
         },

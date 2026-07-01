@@ -14,6 +14,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { beforeEach } from "vite-plus/test";
 
 import {
+  EnvironmentId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -21,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
@@ -62,6 +64,7 @@ const runtimeMock = {
     authHeaders: [] as Array<string | null>,
     abortCalls: [] as string[],
     closeCalls: [] as string[],
+    mcpAddCalls: [] as Array<unknown>,
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
     promptAsyncError: null as Error | null,
@@ -94,6 +97,7 @@ const runtimeMock = {
     this.state.authHeaders.length = 0;
     this.state.abortCalls.length = 0;
     this.state.closeCalls.length = 0;
+    this.state.mcpAddCalls.length = 0;
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
     this.state.promptAsyncError = null;
@@ -215,6 +219,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           })(),
         }),
       },
+      mcp: {
+        add: async (input: unknown) => {
+          runtimeMock.state.mcpAddCalls.push(input);
+        },
+      },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
     Effect.fail(
@@ -270,6 +279,7 @@ const OpenCodeAdapterTestLayer = makeOpenCodeAdapterTestLayer();
 
 beforeEach(() => {
   runtimeMock.reset();
+  McpProviderSession.clearAllMcpProviderSessions();
 });
 
 const advanceTestClock = (ms: number) =>
@@ -293,6 +303,45 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(runtimeMock.state.authHeaders, [
         `Basic ${btoa("opencode:secret-password")}`,
       ]);
+    }),
+  );
+
+  it.effect("registers the T3 MCP server with configured external OpenCode servers", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = ThreadId.make("thread-opencode-external-mcp");
+
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-opencode-external-mcp"),
+        threadId,
+        providerSessionId: "provider-session-opencode-external-mcp",
+        providerInstanceId: ProviderInstanceId.make("opencode"),
+        endpoint: "http://127.0.0.1:43123/mcp?threadId=thread-opencode-external-mcp",
+        authorizationHeader: "Bearer test-token",
+      });
+
+      try {
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        NodeAssert.deepEqual(runtimeMock.state.mcpAddCalls, [
+          {
+            name: "t3-code",
+            config: {
+              type: "remote",
+              url: "http://127.0.0.1:43123/mcp?threadId=thread-opencode-external-mcp",
+              headers: { Authorization: "Bearer test-token" },
+              oauth: false,
+            },
+          },
+        ]);
+      } finally {
+        yield* adapter.stopSession(threadId).pipe(Effect.ignore);
+        McpProviderSession.clearMcpProviderSession(threadId);
+      }
     }),
   );
 
@@ -482,6 +531,37 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         "Groq model 'groq/openai/gpt-oss-120b' failed while answering. Details: 429 rate limit exceeded",
       );
       NodeAssert.equal(sessions[0]?.lastError, error.detail);
+    }).pipe(Effect.provide(adapterLayer));
+  });
+
+  it.effect("passes T3 capability preload as promptAsync system text", () => {
+    const adapterLayer = makeOpenCodeAdapterTestLayer({
+      capabilityRuntime: {
+        skillPaths: [],
+        skillPermissions: {},
+        preloadSystemPrompt: "T3 capability preload:\n- Test: Follow T3 policy.",
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-t3-preload-system");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Fix it",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "openai/gpt-4.1"),
+      });
+
+      const prompt = runtimeMock.state.promptCalls.at(-1) as Record<string, unknown> | undefined;
+      NodeAssert.equal(prompt?.system, "T3 capability preload:\n- Test: Follow T3 policy.");
+      NodeAssert.equal(Object.hasOwn(prompt ?? {}, "agent"), false);
     }).pipe(Effect.provide(adapterLayer));
   });
 

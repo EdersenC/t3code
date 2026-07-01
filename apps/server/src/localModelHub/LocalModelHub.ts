@@ -617,7 +617,6 @@ function mapHuggingFaceApiModel(
   };
 }
 
-
 function makeDownloadRecord(input: {
   readonly source: LocalModelHubSource;
   readonly modelId: string;

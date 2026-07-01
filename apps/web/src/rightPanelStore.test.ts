@@ -127,6 +127,16 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps activity as a singleton surface", () => {
+    useRightPanelStore.getState().open(refA, "activity");
+    useRightPanelStore.getState().open(refA, "activity");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "activity",
+      surfaces: [{ id: "activity", kind: "activity" }],
+    });
+  });
+
   it("replaces the standalone explorer with peer file surfaces", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
