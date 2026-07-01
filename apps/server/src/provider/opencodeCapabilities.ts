@@ -34,7 +34,14 @@ export function mergeOpenCodeCapabilityConfigContent(
   const fragment = openCodeCapabilityConfigFragment({ capabilityRuntime });
   if (fragment.skills === undefined && fragment.permission === undefined) return configContent;
 
-  const base = configContent && configContent.trim().length > 0 ? JSON.parse(configContent) : {};
+  let base: unknown = {};
+  if (configContent && configContent.trim().length > 0) {
+    try {
+      base = JSON.parse(configContent);
+    } catch {
+      return configContent;
+    }
+  }
   const baseConfig = asRecord(base);
   const baseSkills = asRecord(baseConfig.skills);
   const basePermission = asRecord(baseConfig.permission);
