@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -16,6 +17,10 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  type T3SubagentAgent,
+  type T3SubagentCompletedActivityPayload,
+  type T3SubagentDeliveredActivityPayload,
+  type T3SubagentStartedActivityPayload,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -55,6 +60,12 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
+const T3_SUBAGENT_TOOL_CAPABILITY_ID = "t3:tool:subagent";
+const T3_SUBAGENT_TOOL_NAME = "t3_subagent";
+const T3_SUBAGENT_HARNESS_NAME = "T3 MCP";
+const T3_SUBAGENT_STARTED_KIND = "t3.subagent.started";
+const T3_SUBAGENT_COMPLETED_KIND = "t3.subagent.completed";
+const T3_SUBAGENT_DELIVERED_KIND = "t3.subagent.delivered";
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -164,6 +175,165 @@ function maxCheckpointTurnCount(
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+function normalizeInlineText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function nonEmptyText(value: string | null | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function payloadString(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function isT3SubagentAgent(value: unknown): value is T3SubagentAgent {
+  return value === "ollama-gpt-oss-120b-cloud" || value === "ollama-gpt-oss-20b-cloud";
+}
+
+function readT3SubagentStartedPayload(
+  activity: OrchestrationThreadActivity,
+): T3SubagentStartedActivityPayload | null {
+  if (activity.kind !== T3_SUBAGENT_STARTED_KIND || !isRecord(activity.payload)) return null;
+  const payload = activity.payload;
+  const queueItemId = payloadString(payload, "queueItemId");
+  const childThreadId = payloadString(payload, "childThreadId");
+  const childMessageId = payloadString(payload, "childMessageId");
+  const parentThreadId = payloadString(payload, "parentThreadId");
+  const title = payloadString(payload, "title");
+  const prompt = payloadString(payload, "prompt");
+  const promptPreview = payloadString(payload, "promptPreview");
+  if (!queueItemId || !childThreadId || !childMessageId || !parentThreadId || !title) return null;
+  return {
+    queueItemId: EventId.make(queueItemId),
+    status: "started",
+    capabilityId: T3_SUBAGENT_TOOL_CAPABILITY_ID,
+    capabilityKind: "tool",
+    capabilitySource: "t3",
+    harnessName: T3_SUBAGENT_HARNESS_NAME,
+    toolName: T3_SUBAGENT_TOOL_NAME,
+    parentThreadId: ThreadId.make(parentThreadId),
+    parentTurnId:
+      typeof payload.parentTurnId === "string" && payload.parentTurnId.trim().length > 0
+        ? TurnId.make(payload.parentTurnId)
+        : null,
+    childThreadId: ThreadId.make(childThreadId),
+    childMessageId: MessageId.make(childMessageId),
+    title,
+    prompt: prompt ?? promptPreview ?? title,
+    promptPreview: promptPreview ?? title,
+    ...(isT3SubagentAgent(payload.agent) ? { agent: payload.agent } : {}),
+  };
+}
+
+function readT3SubagentCompletedPayload(
+  activity: OrchestrationThreadActivity,
+): T3SubagentCompletedActivityPayload | null {
+  if (activity.kind !== T3_SUBAGENT_COMPLETED_KIND || !isRecord(activity.payload)) return null;
+  const payload = activity.payload;
+  const queueItemId = payloadString(payload, "queueItemId");
+  const parentThreadId = payloadString(payload, "parentThreadId");
+  const childThreadId = payloadString(payload, "childThreadId");
+  const title = payloadString(payload, "title");
+  const prompt = payloadString(payload, "prompt");
+  const promptPreview = payloadString(payload, "promptPreview");
+  const resultPreview = payloadString(payload, "resultPreview");
+  if (!queueItemId || !parentThreadId || !childThreadId || !title || !resultPreview) return null;
+  return {
+    queueItemId: EventId.make(queueItemId),
+    status: payload.status === "failed" ? "failed" : "completed",
+    capabilityId: T3_SUBAGENT_TOOL_CAPABILITY_ID,
+    capabilityKind: "tool",
+    capabilitySource: "t3",
+    harnessName: T3_SUBAGENT_HARNESS_NAME,
+    toolName: T3_SUBAGENT_TOOL_NAME,
+    parentThreadId: ThreadId.make(parentThreadId),
+    childThreadId: ThreadId.make(childThreadId),
+    childTurnId:
+      typeof payload.childTurnId === "string" && payload.childTurnId.trim().length > 0
+        ? TurnId.make(payload.childTurnId)
+        : null,
+    childAssistantMessageId:
+      typeof payload.childAssistantMessageId === "string" &&
+      payload.childAssistantMessageId.trim().length > 0
+        ? MessageId.make(payload.childAssistantMessageId)
+        : null,
+    title,
+    prompt: prompt ?? promptPreview ?? title,
+    promptPreview: promptPreview ?? title,
+    resultPreview,
+    resultText: typeof payload.resultText === "string" ? payload.resultText : "",
+    delivered: false,
+    ...(isT3SubagentAgent(payload.agent) ? { agent: payload.agent } : {}),
+  };
+}
+
+function deliveredQueueItemIds(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlySet<string> {
+  const delivered = new Set<string>();
+  for (const activity of activities) {
+    if (activity.kind !== T3_SUBAGENT_DELIVERED_KIND || !isRecord(activity.payload)) continue;
+    const queueItemId = payloadString(activity.payload, "queueItemId");
+    if (queueItemId) delivered.add(queueItemId);
+  }
+  return delivered;
+}
+
+function deliveryMessageId(queueItemId: string): MessageId {
+  return MessageId.make(`t3-subagent-result:${queueItemId}`);
+}
+
+function threadIsIdleForSubagentDelivery(thread: OrchestrationThread): boolean {
+  if (thread.latestTurn?.state === "running") return false;
+  return thread.session?.status !== "running" && thread.session?.status !== "starting";
+}
+
+function assistantTextForTurn(
+  messages: ReadonlyArray<OrchestrationMessage>,
+  turnId: TurnId | undefined,
+): string {
+  if (!turnId) return "";
+  return messages
+    .filter((message) => message.role === "assistant" && message.turnId === turnId)
+    .map((message) => message.text.trim())
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+}
+
+function buildSubagentResultPrompt(input: {
+  readonly completed: T3SubagentCompletedActivityPayload;
+  readonly deliveryMessageId: MessageId;
+}): string {
+  return [
+    "T3 subagent result",
+    "",
+    `Queue item: ${input.completed.queueItemId}`,
+    `Child thread: ${input.completed.childThreadId}`,
+    `Title: ${input.completed.title}`,
+    `Status: ${input.completed.status}`,
+    ...(input.completed.agent ? [`Agent: ${input.completed.agent}`] : []),
+    "",
+    "The following result came from a completed T3 subagent child session. Use it as context for the current task, explain why it is being surfaced if helpful, and continue from the parent session.",
+    "",
+    "Original caller input:",
+    input.completed.prompt.trim(),
+    "",
+    "Result:",
+    input.completed.resultText.trim().length > 0
+      ? input.completed.resultText.trim()
+      : input.completed.resultPreview,
+    "",
+    `Delivery message: ${input.deliveryMessageId}`,
+  ].join("\n");
 }
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
@@ -994,6 +1164,7 @@ const make = Effect.gen(function* () {
         });
       }
       yield* clearAssistantMessageState(input.messageId);
+      return text;
     });
 
   const finalizeActiveAssistantSegmentForTurn = (input: {
@@ -1235,6 +1406,237 @@ const make = Effect.gen(function* () {
       });
     },
   );
+
+  const findAssistantMessageForTurn = (
+    messages: ReadonlyArray<OrchestrationMessage>,
+    turnId: TurnId | undefined,
+  ): OrchestrationMessage | undefined => {
+    if (!turnId) return undefined;
+    return messages.find((message) => message.role === "assistant" && message.turnId === turnId);
+  };
+
+  const appendSubagentActivity = Effect.fn("appendSubagentActivity")(function* (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    activity: OrchestrationThreadActivity;
+    tag: string;
+    createdAt: string;
+  }) {
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: yield* providerCommandId(input.event, input.tag),
+      threadId: input.threadId,
+      activity: input.activity,
+      createdAt: input.createdAt,
+    });
+  });
+
+  const pendingCompletedSubagentResults = (
+    parentThread: OrchestrationThread,
+  ): T3SubagentCompletedActivityPayload[] => {
+    const delivered = deliveredQueueItemIds(parentThread.activities);
+    const completed = new Map<string, T3SubagentCompletedActivityPayload>();
+    for (const activity of parentThread.activities) {
+      const payload = readT3SubagentCompletedPayload(activity);
+      if (!payload) continue;
+      const queueItemId = String(payload.queueItemId);
+      if (delivered.has(queueItemId)) continue;
+      if (parentThread.messages.some((message) => message.id === deliveryMessageId(queueItemId))) {
+        continue;
+      }
+      if (!completed.has(queueItemId)) {
+        completed.set(queueItemId, payload);
+      }
+    }
+    return [...completed.values()];
+  };
+
+  const drainSubagentQueueForParent = Effect.fn("drainSubagentQueueForParent")(function* (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly parentThread: OrchestrationThread;
+    readonly createdAt: string;
+    readonly forceIdle?: boolean;
+  }) {
+    if (!input.forceIdle && !threadIsIdleForSubagentDelivery(input.parentThread)) {
+      return false;
+    }
+
+    const [completed] = pendingCompletedSubagentResults(input.parentThread);
+    if (!completed) return false;
+
+    const messageId = deliveryMessageId(String(completed.queueItemId));
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.start",
+      commandId: yield* providerCommandId(input.event, "subagent-result-turn-start"),
+      threadId: input.parentThread.id,
+      message: {
+        messageId,
+        role: "user",
+        text: buildSubagentResultPrompt({ completed, deliveryMessageId: messageId }),
+        attachments: [],
+      },
+      modelSelection: input.parentThread.modelSelection,
+      titleSeed: `Subagent result: ${completed.title}`,
+      runtimeMode: input.parentThread.runtimeMode,
+      interactionMode: input.parentThread.interactionMode,
+      createdAt: input.createdAt,
+    });
+
+    const deliveredPayload: T3SubagentDeliveredActivityPayload = {
+      queueItemId: completed.queueItemId,
+      status: "delivered",
+      capabilityId: T3_SUBAGENT_TOOL_CAPABILITY_ID,
+      capabilityKind: "tool",
+      capabilitySource: "t3",
+      harnessName: T3_SUBAGENT_HARNESS_NAME,
+      toolName: T3_SUBAGENT_TOOL_NAME,
+      parentThreadId: input.parentThread.id,
+      childThreadId: completed.childThreadId,
+      deliveryMessageId: messageId,
+      title: completed.title,
+      prompt: completed.prompt,
+      promptPreview: completed.promptPreview,
+      ...(completed.agent ? { agent: completed.agent } : {}),
+    };
+    yield* appendSubagentActivity({
+      event: input.event,
+      threadId: input.parentThread.id,
+      activity: {
+        id: EventId.make(`t3:subagent:delivered:${completed.queueItemId}`),
+        tone: "tool",
+        kind: T3_SUBAGENT_DELIVERED_KIND,
+        summary: `${completed.title} subagent result delivered`,
+        payload: deliveredPayload,
+        turnId: null,
+        createdAt: input.createdAt,
+      },
+      tag: "subagent-delivered",
+      createdAt: input.createdAt,
+    });
+    return true;
+  });
+
+  const drainSubagentQueueForParentThread = Effect.fn("drainSubagentQueueForParentThread")(
+    function* (input: {
+      readonly event: ProviderRuntimeEvent;
+      readonly parentThreadId: ThreadId;
+      readonly createdAt: string;
+      readonly forceIdle?: boolean;
+    }) {
+      const parentThread = yield* resolveThreadDetail(input.parentThreadId);
+      if (!parentThread) return false;
+      return yield* drainSubagentQueueForParent({
+        event: input.event,
+        parentThread,
+        createdAt: input.createdAt,
+        ...(input.forceIdle ? { forceIdle: true } : {}),
+      });
+    },
+  );
+
+  const findSubagentStartForChild = Effect.fn("findSubagentStartForChild")(function* (
+    childThreadId: ThreadId,
+  ) {
+    const snapshot = yield* projectionSnapshotQuery.getSnapshot();
+    for (const parentThread of snapshot.threads) {
+      for (const activity of parentThread.activities) {
+        const payload = readT3SubagentStartedPayload(activity);
+        if (!payload || payload.childThreadId !== childThreadId) continue;
+        return { parentThread, started: payload } as const;
+      }
+    }
+    return null;
+  });
+
+  const completeSubagentQueueItemFromChildTurn = Effect.fn(
+    "completeSubagentQueueItemFromChildTurn",
+  )(function* (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly childThread: OrchestrationThread;
+    readonly childTurnId: TurnId | undefined;
+    readonly assistantText: string;
+    readonly createdAt: string;
+  }) {
+    const match = yield* findSubagentStartForChild(input.childThread.id);
+    if (!match) return;
+
+    const queueItemId = String(match.started.queueItemId);
+    if (
+      match.parentThread.activities.some((activity) => {
+        const payload = readT3SubagentCompletedPayload(activity);
+        return payload && String(payload.queueItemId) === queueItemId;
+      })
+    ) {
+      return;
+    }
+
+    const assistantMessage = findAssistantMessageForTurn(
+      input.childThread.messages,
+      input.childTurnId,
+    );
+    const turnFailed =
+      input.event.type === "turn.completed" &&
+      normalizeRuntimeTurnState(input.event.payload.state) === "failed";
+    const resultText = nonEmptyText(
+      input.assistantText,
+      turnFailed
+        ? (input.event.type === "turn.completed" && input.event.payload.errorMessage) ||
+            "Subagent failed without an error message."
+        : "Subagent completed without text.",
+    );
+    const resultPreview = nonEmptyText(
+      truncateDetail(normalizeInlineText(resultText), 180),
+      turnFailed ? "Subagent failed without an error message." : "Subagent completed without text.",
+    );
+
+    const completedPayload: T3SubagentCompletedActivityPayload = {
+      queueItemId: match.started.queueItemId,
+      status: turnFailed ? "failed" : "completed",
+      capabilityId: T3_SUBAGENT_TOOL_CAPABILITY_ID,
+      capabilityKind: "tool",
+      capabilitySource: "t3",
+      harnessName: T3_SUBAGENT_HARNESS_NAME,
+      toolName: T3_SUBAGENT_TOOL_NAME,
+      parentThreadId: match.parentThread.id,
+      childThreadId: input.childThread.id,
+      childTurnId: input.childTurnId ?? null,
+      childAssistantMessageId:
+        assistantMessage?.id ?? input.childThread.latestTurn?.assistantMessageId ?? null,
+      title: match.started.title,
+      prompt: match.started.prompt,
+      promptPreview: match.started.promptPreview,
+      resultPreview,
+      resultText,
+      delivered: false,
+      ...(match.started.agent ? { agent: match.started.agent } : {}),
+    };
+    const completedActivity: OrchestrationThreadActivity = {
+      id: EventId.make(`t3:subagent:completed:${match.started.queueItemId}`),
+      tone: turnFailed ? "error" : "tool",
+      kind: T3_SUBAGENT_COMPLETED_KIND,
+      summary: `${match.started.title} subagent ${turnFailed ? "failed" : "completed"}`,
+      payload: completedPayload,
+      turnId: match.started.parentTurnId,
+      createdAt: input.createdAt,
+    };
+
+    yield* appendSubagentActivity({
+      event: input.event,
+      threadId: match.parentThread.id,
+      activity: completedActivity,
+      tag: "subagent-completed",
+      createdAt: input.createdAt,
+    });
+
+    yield* drainSubagentQueueForParent({
+      event: input.event,
+      parentThread: {
+        ...match.parentThread,
+        activities: [...match.parentThread.activities, completedActivity],
+      },
+      createdAt: input.createdAt,
+    });
+  });
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
@@ -1577,9 +1979,10 @@ const make = Effect.gen(function* () {
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
+        let assistantText = "";
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
-          yield* Effect.forEach(
+          const finalizedAssistantTexts = yield* Effect.forEach(
             assistantMessageIds,
             (assistantMessageId) =>
               finalizeAssistantMessage({
@@ -1593,7 +1996,14 @@ const make = Effect.gen(function* () {
                 hasProjectedMessage: findMessageById(messages, assistantMessageId) !== undefined,
               }),
             { concurrency: 1 },
-          ).pipe(Effect.asVoid);
+          );
+          assistantText = nonEmptyText(
+            finalizedAssistantTexts
+              .map((text) => text.trim())
+              .filter((text) => text.length > 0)
+              .join("\n\n"),
+            assistantTextForTurn(messages, turnId),
+          );
           yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
 
@@ -1605,6 +2015,38 @@ const make = Effect.gen(function* () {
             turnId,
             updatedAt: now,
           });
+        }
+        if (detailedThread && turnId) {
+          yield* completeSubagentQueueItemFromChildTurn({
+            event,
+            childThread: detailedThread,
+            childTurnId: turnId,
+            assistantText,
+            createdAt: now,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider runtime ingestion failed to complete subagent queue", {
+                eventId: event.eventId,
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+
+          yield* drainSubagentQueueForParentThread({
+            event,
+            parentThreadId: thread.id,
+            createdAt: now,
+            forceIdle: true,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider runtime ingestion failed to drain subagent queue", {
+                eventId: event.eventId,
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
         }
       }
 

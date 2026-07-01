@@ -12,6 +12,7 @@ import { Atom } from "effect/unstable/reactivity";
 import type { EnvironmentThreadShell } from "./models.ts";
 import { scopeThreadShell } from "./models.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
+import { isT3SubagentThreadId } from "./subagentThread.ts";
 import {
   arrayElementsEqual,
   parseProjectRefCollectionKey,
@@ -29,6 +30,14 @@ const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
   ReadonlyArray<ScopedThreadRef>
 > = new Map();
 
+function visibleShellThreads(
+  threads: ReadonlyArray<OrchestrationThreadShell>,
+): ReadonlyArray<OrchestrationThreadShell> {
+  if (threads.length === 0) return EMPTY_THREADS;
+  const visible = threads.filter((thread) => !isT3SubagentThreadId(thread.id));
+  return visible.length === threads.length ? threads : visible;
+}
+
 export function createEnvironmentThreadShellAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly snapshotAtom: (
@@ -38,7 +47,7 @@ export function createEnvironmentThreadShellAtoms(input: {
   const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(
       (get): ReadonlyArray<OrchestrationThreadShell> =>
-        get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS,
+        visibleShellThreads(get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS),
     ).pipe(Atom.withLabel(`environment-threads:${environmentId}`)),
   );
 

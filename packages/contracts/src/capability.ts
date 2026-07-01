@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { MessageId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EventId, MessageId, ThreadId, TrimmedNonEmptyString, TurnId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const T3CapabilityKind = Schema.Literals(["skill", "slash-command", "subagent", "tool"]);
@@ -58,7 +58,6 @@ export const T3CapabilitySnapshotEntry = Schema.Struct({
   sourceDetail: Schema.optional(TrimmedNonEmptyString),
   commandName: Schema.optional(TrimmedNonEmptyString),
   toolName: Schema.optional(TrimmedNonEmptyString),
-  subagentType: Schema.optional(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
   provider: Schema.optional(ProviderDriverKind),
   providerDisplayName: Schema.optional(TrimmedNonEmptyString),
@@ -84,13 +83,16 @@ export const T3CapabilityEventProvenance = Schema.Struct({
 });
 export type T3CapabilityEventProvenance = typeof T3CapabilityEventProvenance.Type;
 
-export const T3SubagentType = Schema.Literals(["explore", "implement", "review"]);
-export type T3SubagentType = typeof T3SubagentType.Type;
+export const T3SubagentAgent = Schema.Literals([
+  "ollama-gpt-oss-120b-cloud",
+  "ollama-gpt-oss-20b-cloud",
+]);
+export type T3SubagentAgent = typeof T3SubagentAgent.Type;
 
 export const T3SubagentRunInput = Schema.Struct({
-  subagentType: T3SubagentType,
   prompt: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
+  agent: Schema.optional(T3SubagentAgent),
 });
 export type T3SubagentRunInput = typeof T3SubagentRunInput.Type;
 
@@ -112,10 +114,70 @@ export type T3SubagentRunError = typeof T3SubagentRunError.Type;
 
 export const T3SubagentRunResult = Schema.Struct({
   status: Schema.Literal("started"),
+  queueItemId: EventId,
   parentThreadId: ThreadId,
   childThreadId: ThreadId,
   childMessageId: MessageId,
-  subagentType: T3SubagentType,
   title: TrimmedNonEmptyString,
+  agent: Schema.optional(T3SubagentAgent),
 });
 export type T3SubagentRunResult = typeof T3SubagentRunResult.Type;
+
+export const T3SubagentStartedActivityPayload = Schema.Struct({
+  queueItemId: EventId,
+  status: Schema.Literal("started"),
+  capabilityId: T3CapabilityId,
+  capabilityKind: Schema.Literal("tool"),
+  capabilitySource: Schema.Literal("t3"),
+  harnessName: TrimmedNonEmptyString,
+  toolName: TrimmedNonEmptyString,
+  parentThreadId: ThreadId,
+  parentTurnId: Schema.NullOr(TurnId),
+  childThreadId: ThreadId,
+  childMessageId: MessageId,
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  promptPreview: TrimmedNonEmptyString,
+  agent: Schema.optional(T3SubagentAgent),
+});
+export type T3SubagentStartedActivityPayload = typeof T3SubagentStartedActivityPayload.Type;
+
+export const T3SubagentCompletedActivityPayload = Schema.Struct({
+  queueItemId: EventId,
+  status: Schema.Literals(["completed", "failed"]),
+  capabilityId: T3CapabilityId,
+  capabilityKind: Schema.Literal("tool"),
+  capabilitySource: Schema.Literal("t3"),
+  harnessName: TrimmedNonEmptyString,
+  toolName: TrimmedNonEmptyString,
+  parentThreadId: ThreadId,
+  childThreadId: ThreadId,
+  childTurnId: Schema.NullOr(TurnId),
+  childAssistantMessageId: Schema.NullOr(MessageId),
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  promptPreview: TrimmedNonEmptyString,
+  resultPreview: TrimmedNonEmptyString,
+  resultText: Schema.String,
+  delivered: Schema.Literal(false),
+  agent: Schema.optional(T3SubagentAgent),
+});
+export type T3SubagentCompletedActivityPayload = typeof T3SubagentCompletedActivityPayload.Type;
+
+export const T3SubagentDeliveredActivityPayload = Schema.Struct({
+  queueItemId: EventId,
+  status: Schema.Literal("delivered"),
+  capabilityId: T3CapabilityId,
+  capabilityKind: Schema.Literal("tool"),
+  capabilitySource: Schema.Literal("t3"),
+  harnessName: TrimmedNonEmptyString,
+  toolName: TrimmedNonEmptyString,
+  parentThreadId: ThreadId,
+  childThreadId: ThreadId,
+  deliveryMessageId: MessageId,
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  promptPreview: TrimmedNonEmptyString,
+  agent: Schema.optional(T3SubagentAgent),
+});
+export type T3SubagentDeliveredActivityPayload = typeof T3SubagentDeliveredActivityPayload.Type;

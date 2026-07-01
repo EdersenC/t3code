@@ -8,6 +8,7 @@ import { resolveThreadRouteRef } from "../threadRoutes";
 import { SidebarInset } from "~/components/ui/sidebar";
 import { useEnvironmentThreadRefs, useThreadDetail, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
+import { useThreadDetail as useThreadDetailQuery } from "../state/queries";
 import { environmentShell } from "../state/shell";
 
 function ChatThreadRouteView() {
@@ -20,6 +21,10 @@ function ChatThreadRouteView() {
   );
   const serverThreadShell = useThreadShell(threadRef);
   const serverThreadDetail = useThreadDetail(threadRef);
+  const serverThreadDetailQuery = useThreadDetailQuery(
+    threadRef?.environmentId ?? null,
+    threadRef?.threadId ?? null,
+  );
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
   const threadExists = serverThreadShell !== null || serverThreadDetail !== null;
@@ -37,6 +42,10 @@ function ChatThreadRouteView() {
     return store.hasDraftThreadsInEnvironment(threadRef.environmentId);
   });
   const routeThreadExists = threadExists || draftThreadExists;
+  const routeThreadPending =
+    !routeThreadExists &&
+    !serverThreadDetailQuery.isDeleted &&
+    serverThreadDetailQuery.error === null;
   const serverThreadStarted = threadHasStarted(serverThreadDetail);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
 
@@ -45,10 +54,17 @@ function ChatThreadRouteView() {
       return;
     }
 
-    if (!routeThreadExists && environmentHasAnyThreads) {
+    if (!routeThreadExists && !routeThreadPending && environmentHasAnyThreads) {
       void navigate({ to: "/", replace: true });
     }
-  }, [bootstrapComplete, environmentHasAnyThreads, navigate, routeThreadExists, threadRef]);
+  }, [
+    bootstrapComplete,
+    environmentHasAnyThreads,
+    navigate,
+    routeThreadPending,
+    routeThreadExists,
+    threadRef,
+  ]);
 
   useEffect(() => {
     if (!threadRef || !serverThreadStarted || !draftThread) {
@@ -57,8 +73,16 @@ function ChatThreadRouteView() {
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread, serverThreadStarted, threadRef]);
 
-  if (!threadRef || !bootstrapComplete || !routeThreadExists) {
+  if (!threadRef || !bootstrapComplete || (!routeThreadExists && !routeThreadPending)) {
     return null;
+  }
+
+  if (routeThreadPending) {
+    return (
+      <SidebarInset className="flex h-svh min-h-0 items-center justify-center overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+        <div className="text-sm text-muted-foreground">Loading child session...</div>
+      </SidebarInset>
+    );
   }
 
   return (

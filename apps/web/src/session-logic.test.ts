@@ -1016,14 +1016,18 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "t3-subagent-started",
         kind: "t3.subagent.started",
-        summary: "Explore subagent started",
+        summary: "Subagent started",
         tone: "tool",
         payload: {
-          capabilityId: "t3:subagent:explore",
-          capabilityKind: "subagent",
+          queueItemId: "queue-1",
+          status: "started",
+          capabilityId: "t3:tool:subagent",
+          capabilityKind: "tool",
           capabilitySource: "t3",
           toolName: "t3_subagent",
-          subagentType: "explore",
+          title: "Subagent",
+          prompt: "Do something harmless and random.",
+          promptPreview: "Do something harmless and random.",
           childThreadId: "thread-child",
         },
       }),
@@ -1032,11 +1036,69 @@ describe("deriveWorkLogEntries", () => {
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry).toMatchObject({
       id: "t3-subagent-started",
-      label: "Explore subagent started",
+      label: "Subagent started",
+      detail: "Child thread\nthread-child\n\nInput\nDo something harmless and random.",
+      subagentChildThreadId: "thread-child",
+      toolLifecycleStatus: "inProgress",
       sourceActivityKind: "t3.subagent.started",
-      capabilityId: "t3:subagent:explore",
-      capabilityKind: "subagent",
+      capabilityId: "t3:tool:subagent",
+      capabilityKind: "tool",
       capabilitySource: "t3",
+    });
+  });
+
+  it("renders T3 subagent completed and delivered queue states", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "t3-subagent-completed",
+        kind: "t3.subagent.completed",
+        summary: "Subagent completed",
+        tone: "tool",
+        payload: {
+          queueItemId: "queue-1",
+          status: "completed",
+          capabilityId: "t3:tool:subagent",
+          capabilityKind: "tool",
+          capabilitySource: "t3",
+          toolName: "t3_subagent",
+          title: "Subagent",
+          prompt: "Do something harmless and random.",
+          promptPreview: "Do something harmless and random.",
+          resultPreview: "The random check completed.",
+          resultText: "The random check completed.\nFull detail line.",
+          childThreadId: "thread-child",
+        },
+      }),
+      makeActivity({
+        id: "t3-subagent-delivered",
+        kind: "t3.subagent.delivered",
+        summary: "Subagent result delivered",
+        tone: "tool",
+        payload: {
+          queueItemId: "queue-1",
+          status: "delivered",
+          capabilityId: "t3:tool:subagent",
+          capabilityKind: "tool",
+          capabilitySource: "t3",
+          toolName: "t3_subagent",
+          title: "Subagent",
+          prompt: "Do something harmless and random.",
+          promptPreview: "Do something harmless and random.",
+          childThreadId: "thread-child",
+          deliveryMessageId: "message-delivery",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      detail:
+        "Child thread\nthread-child\n\nInput\nDo something harmless and random.\n\nOutput\nThe random check completed.\nFull detail line.",
+      toolLifecycleStatus: "completed",
+      capabilityId: "t3:tool:subagent",
+      subagentChildThreadId: "thread-child",
+      sourceActivityKind: "t3.subagent.delivered",
     });
   });
 

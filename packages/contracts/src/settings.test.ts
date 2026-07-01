@@ -182,7 +182,7 @@ describe("ServerSettings.capabilityRegistry", () => {
       capabilityRegistry: {
         skillRoots: ["  .t3/skills  "],
         overrides: {
-          "t3:subagent:review": {
+          "t3:tool:subagent": {
             enabled: false,
             activation: "hidden",
           },
@@ -193,7 +193,7 @@ describe("ServerSettings.capabilityRegistry", () => {
     expect(patch.capabilityRegistry).toEqual({
       skillRoots: [".t3/skills"],
       overrides: {
-        "t3:subagent:review": {
+        "t3:tool:subagent": {
           enabled: false,
           activation: "hidden",
         },
