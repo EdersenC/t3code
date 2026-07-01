@@ -1112,6 +1112,35 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.toolLifecycleStatus).toBe("completed");
   });
 
+  it("preserves grouped tool-call work log metadata", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-group-item",
+        kind: "tool.group.item.completed",
+        summary: "read completed",
+        tone: "tool",
+        payload: {
+          groupId: "tool-group-1",
+          toolCallId: "tool-a",
+          index: 0,
+          name: "read package.json",
+          status: "completed",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      id: "tool-group-item",
+      label: "read completed",
+      sourceActivityKind: "tool.group.item.completed",
+      detail: "Group tool-group-1 - item 1 - read package.json - completed",
+      toolCallId: "tool-a",
+      toolCallGroupId: "tool-group-1",
+      toolCallIndex: 0,
+    });
+  });
+
   it("preserves MCP server, tool, arguments, and results for expanded display", () => {
     const item = {
       type: "mcpToolCall",

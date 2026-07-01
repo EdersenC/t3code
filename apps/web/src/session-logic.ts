@@ -98,6 +98,9 @@ export interface WorkLogEntry {
   capabilitySource?: T3CapabilitySource;
   capabilityProviderInstanceId?: string;
   capabilityHarnessName?: string;
+  toolCallGroupId?: string;
+  toolCallIndex?: number;
+  expectedToolCallCount?: number;
   subagentChildren?: ReadonlyArray<{
     readonly threadId: ThreadId;
     readonly title: string;
@@ -761,6 +764,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activityKind: activity.kind,
   };
   const itemType = extractWorkLogItemType(payload);
+  const toolCallGroup = extractToolCallGroup(payload);
   const capabilityProvenance = extractWorkLogCapabilityProvenance(payload);
   const requestKind = extractWorkLogRequestKind(payload);
   const subagentChildren = extractSubagentChildren(payload);
@@ -811,6 +815,15 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (toolCallId) {
     entry.toolCallId = toolCallId;
+  }
+  if (toolCallGroup.groupId) {
+    entry.toolCallGroupId = toolCallGroup.groupId;
+  }
+  if (toolCallGroup.index !== undefined) {
+    entry.toolCallIndex = toolCallGroup.index;
+  }
+  if (toolCallGroup.expectedCount !== undefined) {
+    entry.expectedToolCallCount = toolCallGroup.expectedCount;
   }
   let toolLifecycleStatus = extractWorkLogToolLifecycleStatus(payload);
   if (!toolLifecycleStatus && activity.kind === "tool.completed") {
@@ -885,6 +898,9 @@ function mergeDerivedWorkLogEntries(
   const capabilityHarnessName = next.capabilityHarnessName ?? previous.capabilityHarnessName;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolCallId = next.toolCallId ?? previous.toolCallId;
+  const toolCallGroupId = next.toolCallGroupId ?? previous.toolCallGroupId;
+  const toolCallIndex = next.toolCallIndex ?? previous.toolCallIndex;
+  const expectedToolCallCount = next.expectedToolCallCount ?? previous.expectedToolCallCount;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
   return {
@@ -906,6 +922,9 @@ function mergeDerivedWorkLogEntries(
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolCallId ? { toolCallId } : {}),
+    ...(toolCallGroupId ? { toolCallGroupId } : {}),
+    ...(toolCallIndex !== undefined ? { toolCallIndex } : {}),
+    ...(expectedToolCallCount !== undefined ? { expectedToolCallCount } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
   };
@@ -1221,7 +1240,7 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
 
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
   const data = asRecord(payload?.data);
-  return asTrimmedString(data?.toolCallId);
+  return asTrimmedString(payload?.toolCallId) ?? asTrimmedString(data?.toolCallId);
 }
 
 function normalizeInlinePreview(value: string): string {
@@ -1303,6 +1322,11 @@ function extractToolDetail(
   payload: Record<string, unknown> | null,
   heading: string,
 ): string | null {
+  const groupDetail = summarizeToolGroupPayload(payload);
+  if (groupDetail) {
+    return groupDetail;
+  }
+
   const rawDetail = asTrimmedString(payload?.detail);
   const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
   const normalizedHeading = normalizePreviewForComparison(heading);
@@ -1325,6 +1349,63 @@ function extractToolDetail(
   }
 
   return null;
+}
+
+function summarizeToolGroupPayload(payload: Record<string, unknown> | null): string | null {
+  const groupId = asTrimmedString(payload?.groupId) ?? asTrimmedString(payload?.toolCallGroupId);
+  if (!groupId) {
+    return null;
+  }
+  const name = asTrimmedString(payload?.name);
+  const status = asTrimmedString(payload?.status);
+  const index = typeof payload?.index === "number" ? payload.index : payload?.toolCallIndex;
+  const expectedCount =
+    typeof payload?.expectedCount === "number"
+      ? payload.expectedCount
+      : typeof payload?.expectedToolCallCount === "number"
+        ? payload.expectedToolCallCount
+        : undefined;
+  const result = asRecord(payload?.result);
+  const groupedResults = Array.isArray(result?.results) ? result.results.length : undefined;
+  const parts = [`Group ${groupId}`];
+  if (typeof index === "number") {
+    parts.push(
+      expectedCount !== undefined ? `item ${index + 1}/${expectedCount}` : `item ${index + 1}`,
+    );
+  } else if (expectedCount !== undefined) {
+    parts.push(`${expectedCount} expected`);
+  }
+  if (name) {
+    parts.push(name);
+  }
+  if (status) {
+    parts.push(status);
+  }
+  if (groupedResults !== undefined) {
+    parts.push(`${groupedResults} results`);
+  }
+  return parts.join(" - ");
+}
+
+function extractToolCallGroup(payload: Record<string, unknown> | null): {
+  readonly groupId?: string;
+  readonly index?: number;
+  readonly expectedCount?: number;
+} {
+  const groupId = asTrimmedString(payload?.toolCallGroupId) ?? asTrimmedString(payload?.groupId);
+  const rawIndex = payload?.toolCallIndex ?? payload?.index;
+  const rawExpectedCount = payload?.expectedToolCallCount ?? payload?.expectedCount;
+  return {
+    ...(groupId ? { groupId } : {}),
+    ...(typeof rawIndex === "number" && Number.isInteger(rawIndex) && rawIndex >= 0
+      ? { index: rawIndex }
+      : {}),
+    ...(typeof rawExpectedCount === "number" &&
+    Number.isInteger(rawExpectedCount) &&
+    rawExpectedCount >= 0
+      ? { expectedCount: rawExpectedCount }
+      : {}),
+  };
 }
 
 function stripTrailingExitCode(value: string): {

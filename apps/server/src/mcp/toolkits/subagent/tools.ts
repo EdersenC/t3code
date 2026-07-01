@@ -2,8 +2,12 @@ import { T3SubagentRunError, T3SubagentRunInput, T3SubagentRunResult } from "@t3
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as T3SubagentRuntime from "../../T3SubagentRuntime.ts";
+import * as ToolCallGroupBarrier from "../../../provider/ToolCallGroupBarrier.ts";
 
-const dependencies = [T3SubagentRuntime.T3SubagentRuntime];
+const dependencies = [
+  T3SubagentRuntime.T3SubagentRuntime,
+  ToolCallGroupBarrier.ToolCallGroupBarrier,
+];
 
 export const T3SubagentTool = Tool.make("t3_subagent", {
   description:

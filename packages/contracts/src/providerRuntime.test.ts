@@ -54,6 +54,86 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.harnessName).toBe("OpenCode");
   });
 
+  it("decodes optional tool-call group metadata on item lifecycle events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "item.started",
+      eventId: "event-tool-group-item",
+      provider: "opencode",
+      providerInstanceId: "opencode",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-1",
+      payload: {
+        itemType: "mcp_tool_call",
+        status: "inProgress",
+        title: "Read package.json",
+        toolCallId: "tool-call-1",
+        toolCallGroupId: "tool-group-1",
+        toolCallIndex: 0,
+        toolCallGroupPolicy: "barrier",
+        expectedToolCallCount: 3,
+      },
+    });
+
+    expect(parsed.type).toBe("item.started");
+    if (parsed.type !== "item.started") {
+      throw new Error("expected item.started");
+    }
+    expect(parsed.payload.toolCallGroupId).toBe("tool-group-1");
+    expect(parsed.payload.toolCallIndex).toBe(0);
+    expect(parsed.payload.toolCallGroupPolicy).toBe("barrier");
+    expect(parsed.payload.expectedToolCallCount).toBe(3);
+  });
+
+  it("decodes grouped tool-call lifecycle events", () => {
+    const started = decodeRuntimeEvent({
+      type: "tool.group.started",
+      eventId: "event-tool-group-started",
+      provider: "opencode",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: {
+        groupId: "tool-group-1",
+        policy: "barrier",
+        expectedToolCallIds: ["tool-a", "tool-b", "tool-c"],
+        expectedCount: 3,
+        title: "Repository inspection",
+      },
+    });
+    expect(started.type).toBe("tool.group.started");
+
+    const completed = decodeRuntimeEvent({
+      type: "tool.group.completed",
+      eventId: "event-tool-group-completed",
+      provider: "opencode",
+      createdAt: "2026-02-28T00:00:01.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: {
+        groupId: "tool-group-1",
+        policy: "barrier",
+        result: {
+          groupId: "tool-group-1",
+          results: [
+            {
+              toolCallId: "tool-a",
+              toolName: "read",
+              status: "completed",
+              content: "package",
+            },
+          ],
+        },
+      },
+    });
+    expect(completed.type).toBe("tool.group.completed");
+    if (completed.type !== "tool.group.completed") {
+      throw new Error("expected tool.group.completed");
+    }
+    expect(completed.payload.result?.results[0]?.toolCallId).toBe("tool-a");
+  });
+
   it("decodes turn.plan.updated for plan rendering", () => {
     const parsed = decodeRuntimeEvent({
       type: "turn.plan.updated",

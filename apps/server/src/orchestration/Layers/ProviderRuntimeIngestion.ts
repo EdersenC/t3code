@@ -365,6 +365,89 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "tool.group.started": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "tool",
+          kind: "tool.group.started",
+          summary: event.payload.title ?? "Tool group started",
+          payload: {
+            groupId: event.payload.groupId,
+            policy: event.payload.policy,
+            expectedToolCallIds: event.payload.expectedToolCallIds,
+            expectedCount: event.payload.expectedCount,
+            ...(event.payload.title ? { title: event.payload.title } : {}),
+            ...(event.payload.timeoutMs !== undefined
+              ? { timeoutMs: event.payload.timeoutMs }
+              : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "tool.group.item.started":
+    case "tool.group.item.completed":
+    case "tool.group.item.failed": {
+      const terminal = event.type !== "tool.group.item.started";
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: terminal && event.payload.status !== "completed" ? "error" : "tool",
+          kind: event.type,
+          summary: `${event.payload.name} ${terminal ? event.payload.status : "started"}`,
+          payload: {
+            groupId: event.payload.groupId,
+            toolCallId: event.payload.toolCallId,
+            index: event.payload.index,
+            name: event.payload.name,
+            status: event.payload.status,
+            ...(event.payload.result !== undefined ? { result: event.payload.result } : {}),
+            ...(event.payload.error !== undefined ? { error: event.payload.error } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "tool.group.completed":
+    case "tool.group.failed":
+    case "tool.group.timed_out":
+    case "tool.group.cancelled": {
+      const failed = event.type !== "tool.group.completed";
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: failed ? "error" : "tool",
+          kind: event.type,
+          summary:
+            event.type === "tool.group.completed"
+              ? "Tool group completed"
+              : event.type === "tool.group.timed_out"
+                ? "Tool group timed out"
+                : event.type === "tool.group.cancelled"
+                  ? "Tool group cancelled"
+                  : "Tool group failed",
+          payload: {
+            groupId: event.payload.groupId,
+            policy: event.payload.policy,
+            ...(event.payload.result !== undefined ? { result: event.payload.result } : {}),
+            ...(event.payload.reason !== undefined
+              ? { reason: truncateDetail(event.payload.reason) }
+              : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "runtime.warning": {
       return [
         {
@@ -570,6 +653,19 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.toolCallId ? { toolCallId: event.payload.toolCallId } : {}),
+            ...(event.payload.toolCallGroupId
+              ? { toolCallGroupId: event.payload.toolCallGroupId }
+              : {}),
+            ...(event.payload.toolCallIndex !== undefined
+              ? { toolCallIndex: event.payload.toolCallIndex }
+              : {}),
+            ...(event.payload.toolCallGroupPolicy
+              ? { toolCallGroupPolicy: event.payload.toolCallGroupPolicy }
+              : {}),
+            ...(event.payload.expectedToolCallCount !== undefined
+              ? { expectedToolCallCount: event.payload.expectedToolCallCount }
+              : {}),
             ...(event.payload.capabilityId ? { capabilityId: event.payload.capabilityId } : {}),
             ...(event.payload.capabilityKind
               ? { capabilityKind: event.payload.capabilityKind }
@@ -603,6 +699,19 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.toolCallId ? { toolCallId: event.payload.toolCallId } : {}),
+            ...(event.payload.toolCallGroupId
+              ? { toolCallGroupId: event.payload.toolCallGroupId }
+              : {}),
+            ...(event.payload.toolCallIndex !== undefined
+              ? { toolCallIndex: event.payload.toolCallIndex }
+              : {}),
+            ...(event.payload.toolCallGroupPolicy
+              ? { toolCallGroupPolicy: event.payload.toolCallGroupPolicy }
+              : {}),
+            ...(event.payload.expectedToolCallCount !== undefined
+              ? { expectedToolCallCount: event.payload.expectedToolCallCount }
+              : {}),
             ...(event.payload.capabilityId ? { capabilityId: event.payload.capabilityId } : {}),
             ...(event.payload.capabilityKind
               ? { capabilityKind: event.payload.capabilityKind }
@@ -636,6 +745,19 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.toolCallId ? { toolCallId: event.payload.toolCallId } : {}),
+            ...(event.payload.toolCallGroupId
+              ? { toolCallGroupId: event.payload.toolCallGroupId }
+              : {}),
+            ...(event.payload.toolCallIndex !== undefined
+              ? { toolCallIndex: event.payload.toolCallIndex }
+              : {}),
+            ...(event.payload.toolCallGroupPolicy
+              ? { toolCallGroupPolicy: event.payload.toolCallGroupPolicy }
+              : {}),
+            ...(event.payload.expectedToolCallCount !== undefined
+              ? { expectedToolCallCount: event.payload.expectedToolCallCount }
+              : {}),
             ...(event.payload.capabilityId ? { capabilityId: event.payload.capabilityId } : {}),
             ...(event.payload.capabilityKind
               ? { capabilityKind: event.payload.capabilityKind }

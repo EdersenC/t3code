@@ -879,6 +879,136 @@ describe("ProviderRuntimeIngestion", () => {
     expect(rawOutput?.content).toBe('import * as Effect from "effect/Effect"\n');
   });
 
+  it("preserves tool-call group metadata on projected tool activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-tool-grouped-started"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-tool-grouped"),
+      itemId: asItemId("item-tool-grouped"),
+      payload: {
+        itemType: "dynamic_tool_call",
+        status: "inProgress",
+        title: "Read file",
+        toolCallId: "tool-read-1",
+        toolCallGroupId: "tool-group-1",
+        toolCallIndex: 0,
+        toolCallGroupPolicy: "barrier",
+        expectedToolCallCount: 3,
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-grouped-started",
+      ),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-tool-grouped-started",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(activity?.kind).toBe("tool.started");
+    expect(payload?.toolCallId).toBe("tool-read-1");
+    expect(payload?.toolCallGroupId).toBe("tool-group-1");
+    expect(payload?.toolCallIndex).toBe(0);
+    expect(payload?.toolCallGroupPolicy).toBe("barrier");
+    expect(payload?.expectedToolCallCount).toBe(3);
+  });
+
+  it("projects grouped tool-call lifecycle events", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "tool.group.started",
+      eventId: asEventId("evt-tool-group-started"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-tool-group"),
+      payload: {
+        groupId: "tool-group-1",
+        policy: "barrier",
+        expectedToolCallIds: ["tool-a", "tool-b", "tool-c"],
+        expectedCount: 3,
+        title: "Repository inspection",
+      },
+    });
+    harness.emit({
+      type: "tool.group.item.completed",
+      eventId: asEventId("evt-tool-group-item-completed"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-tool-group"),
+      payload: {
+        groupId: "tool-group-1",
+        toolCallId: "tool-a",
+        index: 0,
+        name: "read",
+        status: "completed",
+        result: "package",
+      },
+    });
+    harness.emit({
+      type: "tool.group.completed",
+      eventId: asEventId("evt-tool-group-completed"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-tool-group"),
+      payload: {
+        groupId: "tool-group-1",
+        policy: "barrier",
+        result: {
+          groupId: "tool-group-1",
+          results: [
+            {
+              toolCallId: "tool-a",
+              toolName: "read",
+              status: "completed",
+              content: "package",
+            },
+          ],
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-group-completed",
+      ),
+    );
+    expect(
+      thread.activities.map((activity: ProviderRuntimeTestActivity) => activity.kind),
+    ).toContain("tool.group.started");
+    expect(
+      thread.activities.map((activity: ProviderRuntimeTestActivity) => activity.kind),
+    ).toContain("tool.group.item.completed");
+    const completed = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-group-completed",
+    );
+    const payload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+    expect(completed?.kind).toBe("tool.group.completed");
+    expect(payload?.groupId).toBe("tool-group-1");
+    expect(payload?.result).toMatchObject({
+      groupId: "tool-group-1",
+      results: [{ toolCallId: "tool-a", toolName: "read", status: "completed" }],
+    });
+  });
+
   it("normalizes command execution activities to ran-command summaries", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

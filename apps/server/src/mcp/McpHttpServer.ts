@@ -16,6 +16,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import * as T3SubagentRuntime from "./T3SubagentRuntime.ts";
+import * as ToolCallGroupBarrier from "../provider/ToolCallGroupBarrier.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -303,6 +304,7 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
 export const T3SubagentToolkitRegistrationLive = McpServer.toolkit(T3SubagentToolkit).pipe(
   Layer.provide(T3SubagentToolkitHandlersLive),
   Layer.provide(T3SubagentRuntime.layer),
+  Layer.provide(ToolCallGroupBarrier.layer),
 );
 
 export const T3ToolCatalogNotificationLive = Layer.effectDiscard(

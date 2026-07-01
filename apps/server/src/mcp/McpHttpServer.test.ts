@@ -16,6 +16,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -565,6 +566,67 @@ it.effect("fans out one T3 subagent tool call into multiple child sessions", () 
           { title: "Review migration plan", type: "review", status: "started" },
         ],
       });
+    }),
+  ).pipe(Effect.provide(makeSubagentProductionLayer(dispatched)));
+});
+
+it.effect("buffers grouped T3 subagent MCP results until every grouped call is terminal", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const call = (toolCallId: string, toolCallIndex: number, prompt: string) =>
+        server
+          .callTool({
+            name: "t3_subagent",
+            arguments: {
+              subagentType: "review",
+              prompt,
+              parentTurnId,
+              toolCallGroupId: "tool-group-subagents",
+              toolCallId,
+              toolCallIndex,
+              toolCallGroupPolicy: "barrier",
+              expectedToolCallCount: 2,
+            },
+          })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, {
+              ...invocation,
+              capabilities: new Set([McpInvocationContext.T3_SUBAGENT_MCP_CAPABILITY]),
+            }),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+
+      const firstFiber = yield* call("tool-a", 0, "Review the first thing.").pipe(
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      const second = yield* call("tool-b", 1, "Review the second thing.");
+      const first = yield* Fiber.join(firstFiber);
+
+      expect(first.isError).toBe(false);
+      expect(second.isError).toBe(false);
+      expect(first.structuredContent).toMatchObject({
+        groupedResult: {
+          groupId: "tool-group-subagents",
+          results: [
+            { toolCallId: "tool-a", toolName: "t3_subagent", status: "completed" },
+            { toolCallId: "tool-b", toolName: "t3_subagent", status: "completed" },
+          ],
+        },
+      });
+      expect(second.structuredContent).toMatchObject({
+        groupedResult: {
+          groupId: "tool-group-subagents",
+          results: [
+            { toolCallId: "tool-a", toolName: "t3_subagent", status: "completed" },
+            { toolCallId: "tool-b", toolName: "t3_subagent", status: "completed" },
+          ],
+        },
+      });
+      expect(dispatched.filter((command) => command.type === "thread.create")).toHaveLength(2);
     }),
   ).pipe(Effect.provide(makeSubagentProductionLayer(dispatched)));
 });

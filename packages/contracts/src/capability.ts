@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { MessageId, ThreadId, TrimmedNonEmptyString, TurnId } from "./baseSchemas.ts";
 import { AgentKind } from "./orchestration.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ToolCallGroupMetadata, ToolCallGroupedResult, ToolCallId } from "./toolCallGroup.ts";
 
 export const T3CapabilityKind = Schema.Literals(["skill", "slash-command", "subagent", "tool"]);
 export type T3CapabilityKind = typeof T3CapabilityKind.Type;
@@ -109,6 +110,8 @@ export const T3SubagentRunInput = Schema.Struct({
   spawnGroupId: Schema.optional(TrimmedNonEmptyString),
   parentTurnId: Schema.optional(TurnId),
   spawnedByToolCallId: Schema.optional(TrimmedNonEmptyString),
+  toolCallId: Schema.optional(ToolCallId),
+  ...ToolCallGroupMetadata.fields,
 });
 export type T3SubagentRunInput = typeof T3SubagentRunInput.Type;
 
@@ -153,5 +156,6 @@ export const T3SubagentRunResult = Schema.Struct({
   childMessageId: Schema.optional(MessageId),
   subagentType: Schema.optional(T3SubagentType),
   title: TrimmedNonEmptyString,
+  groupedResult: Schema.optional(ToolCallGroupedResult),
 });
 export type T3SubagentRunResult = typeof T3SubagentRunResult.Type;
