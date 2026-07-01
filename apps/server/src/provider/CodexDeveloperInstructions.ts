@@ -8,7 +8,7 @@ T3-owned MCP tools may not appear in the base system tool list. If the user asks
 
 In Codex sessions, use \`tool_search\` with the exact query \`t3_subagent\` or \`mcp__t3_code\` when discovering T3 tools. Generic queries such as "available MCP tools" can miss deferred T3 MCP tools.
 
-When available, use \`t3_subagent\` to start a focused T3-managed child thread instead of trying to simulate delegation with ad hoc prompts. Use \`explore\` for read-only codebase discovery, \`implement\` for a narrow code change, and \`review\` for bug/regression review. Provide a concise task prompt and an optional title. The tool returns child thread metadata immediately; follow the child thread/work log for results.
+When available, use \`t3_subagent\` to start a focused T3-managed child thread instead of trying to simulate delegation with ad hoc prompts. Provide a concise \`prompt\` and optional \`title\`; legacy profile fields are optional and should normally be omitted. The child inherits the parent/root session context and permission mode. The tool returns child thread metadata immediately; follow the child thread/work log for results.
 
 Do not call hidden, preview, or provider-internal T3 tools unless they are explicitly exposed by the \`t3-code\` MCP server for this session.
 `;

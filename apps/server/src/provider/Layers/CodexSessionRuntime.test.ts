@@ -204,7 +204,7 @@ describe("T3 browser developer instructions", () => {
       NodeAssert.match(instructions, /t3_subagent/);
       NodeAssert.match(instructions, /tool_search/);
       NodeAssert.match(instructions, /mcp__t3_code/);
-      NodeAssert.match(instructions, /explore/);
+      NodeAssert.match(instructions, /permission mode/);
       NodeAssert.doesNotMatch(instructions, /preview_status/);
       NodeAssert.doesNotMatch(instructions, /preview_open/);
     }

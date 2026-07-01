@@ -86,12 +86,14 @@ export const T3CapabilityEventProvenance = Schema.Struct({
 });
 export type T3CapabilityEventProvenance = typeof T3CapabilityEventProvenance.Type;
 
-export const T3SubagentType = Schema.Literals(["explore", "implement", "review"]);
+export const T3SubagentType = Schema.Literals(["explore", "implement", "review", "custom"]);
 export type T3SubagentType = typeof T3SubagentType.Type;
+const NullableT3SubagentType = Schema.NullOr(T3SubagentType);
 
 export const T3SubagentSpec = Schema.Struct({
-  type: Schema.optional(T3SubagentType),
-  subagentType: Schema.optional(T3SubagentType),
+  type: Schema.optional(NullableT3SubagentType),
+  subagentType: Schema.optional(NullableT3SubagentType),
+  subagent_type: Schema.optional(NullableT3SubagentType),
   agentKind: Schema.optional(AgentKind),
   prompt: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
@@ -101,7 +103,8 @@ export const T3SubagentSpec = Schema.Struct({
 export type T3SubagentSpec = typeof T3SubagentSpec.Type;
 
 export const T3SubagentRunInput = Schema.Struct({
-  subagentType: Schema.optional(T3SubagentType),
+  subagentType: Schema.optional(NullableT3SubagentType),
+  subagent_type: Schema.optional(NullableT3SubagentType),
   prompt: Schema.optional(TrimmedNonEmptyString),
   title: Schema.optional(TrimmedNonEmptyString),
   agents: Schema.optional(Schema.Array(T3SubagentSpec)),

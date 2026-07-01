@@ -13,7 +13,7 @@ const dependencies = [
 
 export const T3SubagentTool = Tool.make("t3_subagent", {
   description:
-    "Start one or more T3-owned subagent threads. Use legacy subagentType/prompt for one agent, or agents[] for fanout. Supported agent types are explore, implement, and review.",
+    "Start one or more T3-owned subagent threads. Use prompt/title for one general subagent, or agents[] for fanout. Legacy subagentType/subagent_type hints are accepted but optional.",
   parameters: T3SubagentRunInput,
   success: T3SubagentRunResult,
   failure: T3SubagentRunError,

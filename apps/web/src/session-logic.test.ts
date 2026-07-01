@@ -1019,8 +1019,8 @@ describe("deriveWorkLogEntries", () => {
         summary: "Explore subagent started",
         tone: "tool",
         payload: {
-          capabilityId: "t3:subagent:explore",
-          capabilityKind: "subagent",
+          capabilityId: "t3:tool:subagent",
+          capabilityKind: "tool",
           capabilitySource: "t3",
           toolName: "t3_subagent",
           subagentType: "explore",
@@ -1034,8 +1034,8 @@ describe("deriveWorkLogEntries", () => {
       id: "t3-subagent-started",
       label: "Explore subagent started",
       sourceActivityKind: "t3.subagent.started",
-      capabilityId: "t3:subagent:explore",
-      capabilityKind: "subagent",
+      capabilityId: "t3:tool:subagent",
+      capabilityKind: "tool",
       capabilitySource: "t3",
     });
   });

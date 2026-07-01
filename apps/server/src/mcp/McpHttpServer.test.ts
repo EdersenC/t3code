@@ -457,6 +457,73 @@ it.effect("registers the T3 subagent toolkit with the production runtime", () =>
   ).pipe(Effect.provide(makeSubagentProductionLayer(dispatched)));
 });
 
+it.effect("accepts prompt-only T3 subagent calls with null legacy profile fields", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+
+      const result = yield* server
+        .callTool({
+          name: "t3_subagent",
+          arguments: {
+            subagent_type: null,
+            prompt: "Count the README lines and report the number.",
+          },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...invocation,
+            capabilities: new Set([McpInvocationContext.T3_SUBAGENT_MCP_CAPABILITY]),
+          }),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({
+        status: "started",
+        parentThreadId: threadId,
+        rootThreadId: threadId,
+        subagentType: "custom",
+        title: "Subagent",
+        children: [
+          {
+            status: "started",
+            parentThreadId: threadId,
+            rootThreadId: threadId,
+            subagentType: "custom",
+            agentKind: "custom",
+            title: "Subagent",
+          },
+        ],
+      });
+
+      const createCommand = dispatched[0] as Extract<
+        OrchestrationCommand,
+        { type: "thread.create" }
+      >;
+      expect(createCommand.runtimeMode).toBe(parentThread.runtimeMode);
+      expect(createCommand.agentMetadata).toMatchObject({
+        rootThreadId: threadId,
+        parentThreadId: threadId,
+        agentRole: "subagent",
+        agentKind: "custom",
+        displayName: "Subagent",
+      });
+
+      const turnCommand = dispatched[1] as Extract<
+        OrchestrationCommand,
+        { type: "thread.turn.start" }
+      >;
+      expect(turnCommand.runtimeMode).toBe(parentThread.runtimeMode);
+      expect(turnCommand.message.text).toContain(
+        "You are a T3 general-purpose subagent running as a child session.",
+      );
+      expect(turnCommand.message.text).toContain("Count the README lines");
+    }),
+  ).pipe(Effect.provide(makeSubagentProductionLayer(dispatched)));
+});
+
 it.effect("fans out one T3 subagent tool call into multiple child sessions", () => {
   const dispatched: Array<OrchestrationCommand> = [];
   return Effect.scoped(

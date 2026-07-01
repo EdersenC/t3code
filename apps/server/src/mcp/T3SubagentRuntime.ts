@@ -42,7 +42,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 const TOOL_CAPABILITY_ID = "t3:tool:subagent";
-const subagentCapabilityId = (type: T3SubagentType) => `t3:subagent:${type}`;
+const DEFAULT_SUBAGENT_TYPE: T3SubagentType = "custom";
 
 const makeError = (code: T3SubagentRunError["code"], message: string): T3SubagentRunError => ({
   code,
@@ -67,10 +67,11 @@ interface NormalizedSpawnRequest {
 }
 
 const titleFor = (type: T3SubagentType, title?: string): string =>
-  title ?? `${type[0]?.toUpperCase()}${type.slice(1)}`;
+  title ??
+  (type === DEFAULT_SUBAGENT_TYPE ? "Subagent" : `${type[0]?.toUpperCase()}${type.slice(1)}`);
 
-const runtimeModeFor = (type: T3SubagentType, parentRuntimeMode: RuntimeMode): RuntimeMode =>
-  type === "implement" ? parentRuntimeMode : "approval-required";
+const runtimeModeFor = (_type: T3SubagentType, parentRuntimeMode: RuntimeMode): RuntimeMode =>
+  parentRuntimeMode;
 
 const profileInstruction = (type: T3SubagentType): string => {
   switch (type) {
@@ -89,6 +90,12 @@ const profileInstruction = (type: T3SubagentType): string => {
         "You are the T3 review subagent.",
         "Review for bugs, regressions, missing tests, and contract drift. Lead with findings.",
       ].join("\n");
+    case "custom":
+      return [
+        "You are a T3 general-purpose subagent running as a child session.",
+        "Complete the assigned task and return a concise result for the parent agent.",
+        "Include enough context for the parent agent to understand what you did, what you found, and any useful next step.",
+      ].join("\n");
   }
 };
 
@@ -99,15 +106,8 @@ function buildPrompt(spec: NormalizedSubagentSpec): string {
 function normalizeSubagentSpec(
   spec: T3SubagentSpec,
 ): Effect.Effect<NormalizedSubagentSpec, T3SubagentRunError> {
-  const subagentType = spec.subagentType ?? spec.type;
-  if (subagentType === undefined) {
-    return Effect.fail(
-      makeError(
-        "invalid_input",
-        "Each subagent spec must include a supported type or subagentType.",
-      ),
-    );
-  }
+  const subagentType =
+    spec.subagentType ?? spec.subagent_type ?? spec.type ?? DEFAULT_SUBAGENT_TYPE;
   const agentKind = spec.agentKind ?? agentKindForSubagentType(subagentType);
   return Effect.succeed({
     subagentType,
@@ -122,13 +122,14 @@ const normalizeSpawnRequest = (
   input: T3SubagentRunInput,
 ): Effect.Effect<NormalizedSpawnRequest, T3SubagentRunError> =>
   Effect.gen(function* () {
+    const singleSubagentType = input.subagentType ?? input.subagent_type ?? DEFAULT_SUBAGENT_TYPE;
     const specs =
       input.agents !== undefined && input.agents.length > 0
         ? input.agents
-        : input.subagentType !== undefined && input.prompt !== undefined
+        : input.prompt !== undefined
           ? [
               {
-                subagentType: input.subagentType,
+                subagentType: singleSubagentType,
                 prompt: input.prompt,
                 ...(input.title !== undefined ? { title: input.title } : {}),
               },
@@ -138,7 +139,7 @@ const normalizeSpawnRequest = (
       return yield* Effect.fail(
         makeError(
           "invalid_input",
-          "Provide either the legacy subagentType/prompt fields or a non-empty agents array.",
+          "Provide either prompt for one subagent or a non-empty agents array.",
         ),
       );
     }
@@ -306,11 +307,6 @@ const make = Effect.gen(function* () {
       ),
     );
     yield* assertCapabilityEnabled(registry, TOOL_CAPABILITY_ID);
-    yield* Effect.forEach(
-      new Set(spawnRequest.agents.map((agent) => agent.subagentType)),
-      (subagentType) => assertCapabilityEnabled(registry, subagentCapabilityId(subagentType)),
-      { concurrency: 1 },
-    );
 
     const parentThreadOption = yield* projection
       .getThreadDetailById(invocation.threadId)
