@@ -39,6 +39,7 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeAgentTraceContext } from "../agentGraph.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
@@ -378,6 +379,7 @@ function runtimeEventToActivities(
             policy: event.payload.policy,
             expectedToolCallIds: event.payload.expectedToolCallIds,
             expectedCount: event.payload.expectedCount,
+            ...(event.payload.trace !== undefined ? { trace: event.payload.trace } : {}),
             ...(event.payload.title ? { title: event.payload.title } : {}),
             ...(event.payload.timeoutMs !== undefined
               ? { timeoutMs: event.payload.timeoutMs }
@@ -406,6 +408,7 @@ function runtimeEventToActivities(
             index: event.payload.index,
             name: event.payload.name,
             status: event.payload.status,
+            ...(event.payload.trace !== undefined ? { trace: event.payload.trace } : {}),
             ...(event.payload.result !== undefined ? { result: event.payload.result } : {}),
             ...(event.payload.error !== undefined ? { error: event.payload.error } : {}),
           },
@@ -437,6 +440,7 @@ function runtimeEventToActivities(
           payload: {
             groupId: event.payload.groupId,
             policy: event.payload.policy,
+            ...(event.payload.trace !== undefined ? { trace: event.payload.trace } : {}),
             ...(event.payload.result !== undefined ? { result: event.payload.result } : {}),
             ...(event.payload.reason !== undefined
               ? { reason: truncateDetail(event.payload.reason) }
@@ -1390,6 +1394,20 @@ const make = Effect.gen(function* () {
           if (metadata?.agentRole !== "subagent" || metadata.parentThreadId === undefined) {
             return;
           }
+          const trace = makeAgentTraceContext({
+            thread: {
+              ...thread,
+              messages: [],
+              proposedPlans: [],
+              activities: [],
+              checkpoints: [],
+              deletedAt: null,
+            },
+            timestamp: now,
+            correlationId: event.eventId,
+            turnId: eventTurnId ?? thread.latestTurn?.turnId ?? null,
+            providerInstanceId: event.providerInstanceId,
+          });
           yield* Effect.forEach(
             [metadata.parentThreadId, metadata.rootThreadId].filter(
               (candidate, index, array) => array.indexOf(candidate) === index,
@@ -1425,6 +1443,7 @@ const make = Effect.gen(function* () {
                       ...(event.providerInstanceId !== undefined
                         ? { providerInstanceId: event.providerInstanceId }
                         : {}),
+                      trace,
                     },
                     turnId: eventTurnId ?? thread.latestTurn?.turnId ?? null,
                     createdAt: now,

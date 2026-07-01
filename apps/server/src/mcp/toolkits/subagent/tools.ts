@@ -3,10 +3,12 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as T3SubagentRuntime from "../../T3SubagentRuntime.ts";
 import * as ToolCallGroupBarrier from "../../../provider/ToolCallGroupBarrier.ts";
+import { ServerSettingsService } from "../../../serverSettings.ts";
 
 const dependencies = [
   T3SubagentRuntime.T3SubagentRuntime,
   ToolCallGroupBarrier.ToolCallGroupBarrier,
+  ServerSettingsService,
 ];
 
 export const T3SubagentTool = Tool.make("t3_subagent", {

@@ -696,6 +696,45 @@ export const LocalModelRuntimeSettings = Schema.Struct({
 });
 export type LocalModelRuntimeSettings = typeof LocalModelRuntimeSettings.Type;
 
+export const DEFAULT_AGENTIC_RESOURCE_LIMITS = {
+  maxAgentDepth: 8,
+  maxChildrenPerAgent: 64,
+  maxActiveAgentsPerSession: 64,
+  maxToolCallsPerGroup: 32,
+  defaultToolGroupTimeoutMs: 120_000,
+  maxToolGroupTimeoutMs: 600_000,
+} as const;
+
+export const AgenticResourceLimitsSettings = Schema.Struct({
+  maxAgentDepth: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENTIC_RESOURCE_LIMITS.maxAgentDepth)),
+  ),
+  maxChildrenPerAgent: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENTIC_RESOURCE_LIMITS.maxChildrenPerAgent)),
+  ),
+  maxActiveAgentsPerSession: PositiveInt.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(DEFAULT_AGENTIC_RESOURCE_LIMITS.maxActiveAgentsPerSession),
+    ),
+  ),
+  maxToolCallsPerGroup: PositiveInt.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(DEFAULT_AGENTIC_RESOURCE_LIMITS.maxToolCallsPerGroup),
+    ),
+  ),
+  defaultToolGroupTimeoutMs: PositiveInt.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(DEFAULT_AGENTIC_RESOURCE_LIMITS.defaultToolGroupTimeoutMs),
+    ),
+  ),
+  maxToolGroupTimeoutMs: PositiveInt.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(DEFAULT_AGENTIC_RESOURCE_LIMITS.maxToolGroupTimeoutMs),
+    ),
+  ),
+});
+export type AgenticResourceLimitsSettings = typeof AgenticResourceLimitsSettings.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -749,6 +788,9 @@ export const ServerSettings = Schema.Struct({
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   localModelRuntime: LocalModelRuntimeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   capabilityRegistry: T3CapabilityRegistrySettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  agenticResourceLimits: AgenticResourceLimitsSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
 });
@@ -881,6 +923,16 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   capabilityRegistry: Schema.optionalKey(T3CapabilityRegistrySettingsPatch),
+  agenticResourceLimits: Schema.optionalKey(
+    Schema.Struct({
+      maxAgentDepth: Schema.optionalKey(PositiveInt),
+      maxChildrenPerAgent: Schema.optionalKey(PositiveInt),
+      maxActiveAgentsPerSession: Schema.optionalKey(PositiveInt),
+      maxToolCallsPerGroup: Schema.optionalKey(PositiveInt),
+      defaultToolGroupTimeoutMs: Schema.optionalKey(PositiveInt),
+      maxToolGroupTimeoutMs: Schema.optionalKey(PositiveInt),
+    }),
+  ),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),

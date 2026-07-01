@@ -1,4 +1,5 @@
 import {
+  type AgentThreadMetadata,
   EventId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -59,6 +60,34 @@ type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
 type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
+
+function traceFromAgentMetadata(input: {
+  readonly metadata: AgentThreadMetadata;
+  readonly timestamp: string;
+  readonly correlationId: string;
+}) {
+  return {
+    projectId: input.metadata.projectId,
+    rootThreadId: input.metadata.rootThreadId,
+    threadId: input.metadata.threadId,
+    ...(input.metadata.parentThreadId !== undefined
+      ? { parentThreadId: input.metadata.parentThreadId }
+      : {}),
+    agentKind: input.metadata.agentKind,
+    depth: input.metadata.depth,
+    ...(input.metadata.spawnedByTurnId !== undefined
+      ? { turnId: input.metadata.spawnedByTurnId }
+      : {}),
+    ...(input.metadata.spawnGroupId !== undefined
+      ? { spawnGroupId: input.metadata.spawnGroupId }
+      : {}),
+    ...(input.metadata.spawnedByToolCallId !== undefined
+      ? { toolCallId: input.metadata.spawnedByToolCallId }
+      : {}),
+    correlationId: input.correlationId,
+    timestamp: input.timestamp,
+  };
+}
 
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
@@ -266,6 +295,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "agent.spawned",
         payload: {
           metadata: agentMetadata,
+          trace: traceFromAgentMetadata({
+            metadata: agentMetadata,
+            timestamp: command.createdAt,
+            correlationId: command.commandId,
+          }),
           spawnedAt: command.createdAt,
         },
       };
@@ -297,6 +331,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ...(agentMetadata.spawnGroupId !== undefined
               ? { spawnGroupId: agentMetadata.spawnGroupId }
               : {}),
+            trace: traceFromAgentMetadata({
+              metadata: agentMetadata,
+              timestamp: command.createdAt,
+              correlationId: command.commandId,
+            }),
             requestedAt: command.createdAt,
           },
         },

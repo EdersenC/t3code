@@ -3,6 +3,8 @@ import {
   CommandId,
   EventId,
   MessageId,
+  type OrchestrationThread,
+  type ProviderInstanceId,
   RuntimeMode,
   type AgentKind,
   type T3SubagentRunChildResult,
@@ -26,9 +28,10 @@ import {
   type T3CapabilityRegistry,
 } from "../capabilities/T3CapabilityRegistry.ts";
 import {
-  AGENT_GRAPH_LIMITS,
+  agentGraphLimitsFromSettings,
   agentKindForSubagentType,
   agentMetadataForThread,
+  makeAgentTraceContext,
 } from "../orchestration/agentGraph.ts";
 import {
   OrchestrationEngineService,
@@ -212,14 +215,26 @@ const make = Effect.gen(function* () {
       );
 
   const appendSpawnFailureActivity = (input: {
+    readonly parentThread: OrchestrationThread;
     readonly parentThreadId: ThreadId;
     readonly rootThreadId: ThreadId;
     readonly parentTurnId: TurnId | null;
     readonly spawnGroupId: string;
     readonly message: string;
     readonly createdAt: string;
+    readonly correlationId: string;
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) =>
     Effect.gen(function* () {
+      const trace = makeAgentTraceContext({
+        thread: input.parentThread,
+        timestamp: input.createdAt,
+        correlationId: input.correlationId,
+        turnId: input.parentTurnId,
+        toolCallId: undefined,
+        toolCallGroupId: undefined,
+        providerInstanceId: input.providerInstanceId,
+      });
       yield* Effect.forEach(
         [input.parentThreadId, input.rootThreadId].filter(
           (candidate, index, array) => array.indexOf(candidate) === index,
@@ -246,6 +261,7 @@ const make = Effect.gen(function* () {
                   rootThreadId: input.rootThreadId,
                   status: "failed",
                   message: input.message,
+                  trace,
                 },
                 turnId: input.parentTurnId,
                 createdAt: input.createdAt,
@@ -322,23 +338,28 @@ const make = Effect.gen(function* () {
     const spawnGroupId =
       spawnRequest.spawnGroupId ?? `t3:subagent:spawn:${String(yield* randomUuid)}`;
     const parentTurnId = spawnRequest.parentTurnId ?? parentThread.latestTurn?.turnId ?? null;
+    const graphLimits = agentGraphLimitsFromSettings(currentSettings.agenticResourceLimits);
+    const spawnCorrelationId = `mcp:subagent:spawn:${spawnGroupId}`;
 
     const failWithActivity = (message: string, code: T3SubagentRunError["code"]) =>
       Effect.gen(function* () {
         yield* appendSpawnFailureActivity({
+          parentThread,
           parentThreadId: parentThread.id,
           rootThreadId,
           parentTurnId,
           spawnGroupId,
           message,
           createdAt,
+          correlationId: spawnCorrelationId,
+          providerInstanceId: invocation.providerInstanceId,
         });
         return yield* Effect.fail(makeError(code, message));
       });
 
-    if (parentAgentMetadata.depth >= AGENT_GRAPH_LIMITS.maxDepth) {
+    if (parentAgentMetadata.depth >= graphLimits.maxDepth) {
       return yield* failWithActivity(
-        `Subagent depth limit ${AGENT_GRAPH_LIMITS.maxDepth} would be exceeded.`,
+        `Subagent depth limit ${graphLimits.maxDepth} would be exceeded.`,
         "limit_exceeded",
       );
     }
@@ -350,12 +371,9 @@ const make = Effect.gen(function* () {
           makeError("read_model_unavailable", `Failed to load child agents: ${error.message}`),
         ),
       );
-    if (
-      childThreads.length + spawnRequest.agents.length >
-      AGENT_GRAPH_LIMITS.maxChildrenPerParent
-    ) {
+    if (childThreads.length + spawnRequest.agents.length > graphLimits.maxChildrenPerParent) {
       return yield* failWithActivity(
-        `Subagent child limit ${AGENT_GRAPH_LIMITS.maxChildrenPerParent} would be exceeded.`,
+        `Subagent child limit ${graphLimits.maxChildrenPerParent} would be exceeded.`,
         "limit_exceeded",
       );
     }
@@ -368,9 +386,9 @@ const make = Effect.gen(function* () {
         ),
       );
     const activeAgentCount = Option.isSome(rootTree) ? rootTree.value.activeAgentCount : 0;
-    if (activeAgentCount + spawnRequest.agents.length > AGENT_GRAPH_LIMITS.maxActiveAgentsPerRoot) {
+    if (activeAgentCount + spawnRequest.agents.length > graphLimits.maxActiveAgentsPerRoot) {
       return yield* failWithActivity(
-        `Active agent limit ${AGENT_GRAPH_LIMITS.maxActiveAgentsPerRoot} would be exceeded.`,
+        `Active agent limit ${graphLimits.maxActiveAgentsPerRoot} would be exceeded.`,
         "limit_exceeded",
       );
     }
@@ -442,6 +460,16 @@ const make = Effect.gen(function* () {
       { concurrency: 1 },
     );
 
+    const parentTrace = makeAgentTraceContext({
+      thread: parentThread,
+      timestamp: createdAt,
+      correlationId: spawnCorrelationId,
+      turnId: parentTurnId,
+      toolCallId: spawnRequest.spawnedByToolCallId,
+      toolCallGroupId: input.toolCallGroupId,
+      providerInstanceId: invocation.providerInstanceId,
+    });
+
     yield* Effect.forEach(
       [parentThread.id, rootThreadId].filter(
         (candidate, index, array) => array.indexOf(candidate) === index,
@@ -471,6 +499,7 @@ const make = Effect.gen(function* () {
                 rootThreadId,
                 providerInstanceId: invocation.providerInstanceId,
                 providerSessionId: invocation.providerSessionId,
+                trace: parentTrace,
                 children: children.map((child) => ({
                   threadId: child.childThreadId,
                   title: child.title,

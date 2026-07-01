@@ -10,7 +10,11 @@ import type {
 import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
-import { AGENT_GRAPH_LIMITS, agentMetadataForThread, isActiveAgentSession } from "./agentGraph.ts";
+import {
+  DEFAULT_AGENT_GRAPH_LIMITS,
+  agentMetadataForThread,
+  isActiveAgentSession,
+} from "./agentGraph.ts";
 
 function invariantError(commandType: string, detail: string): OrchestrationCommandInvariantError {
   return new OrchestrationCommandInvariantError({
@@ -134,11 +138,11 @@ export function validateThreadCreateAgentMetadata(input: {
   }
 
   const depth = parentMetadata.depth + 1;
-  if (depth > AGENT_GRAPH_LIMITS.maxDepth) {
+  if (depth > DEFAULT_AGENT_GRAPH_LIMITS.maxDepth) {
     return Effect.fail(
       invariantError(
         command.type,
-        `Agent graph depth ${depth} exceeds max depth ${AGENT_GRAPH_LIMITS.maxDepth}.`,
+        `Agent graph depth ${depth} exceeds max depth ${DEFAULT_AGENT_GRAPH_LIMITS.maxDepth}.`,
       ),
     );
   }
@@ -147,7 +151,7 @@ export function validateThreadCreateAgentMetadata(input: {
     const metadata = agentMetadataForThread(thread);
     return metadata.parentThreadId === requested.parentThreadId && thread.deletedAt === null;
   }).length;
-  if (directChildCount >= AGENT_GRAPH_LIMITS.maxChildrenPerParent) {
+  if (directChildCount >= DEFAULT_AGENT_GRAPH_LIMITS.maxChildrenPerParent) {
     return Effect.fail(
       invariantError(
         command.type,
@@ -164,7 +168,7 @@ export function validateThreadCreateAgentMetadata(input: {
       isActiveAgentSession(thread.session)
     );
   }).length;
-  if (activeAgentCount >= AGENT_GRAPH_LIMITS.maxActiveAgentsPerRoot) {
+  if (activeAgentCount >= DEFAULT_AGENT_GRAPH_LIMITS.maxActiveAgentsPerRoot) {
     return Effect.fail(
       invariantError(
         command.type,

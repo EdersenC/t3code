@@ -21,12 +21,14 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { ToolCallGroupId, ToolCallGroupPolicy, ToolCallId } from "./toolCallGroup.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   getAgentTree: "orchestration.agentTree.get",
+  controlAgentLifecycle: "orchestration.agent.lifecycle.control",
   getProjectModelAnalytics: "orchestration.getProjectModelAnalytics",
   replayEvents: "orchestration.replayEvents",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
@@ -347,6 +349,37 @@ export const AgentThreadMetadata = Schema.Struct({
 });
 export type AgentThreadMetadata = typeof AgentThreadMetadata.Type;
 
+export const AgentTraceContext = Schema.Struct({
+  projectId: ProjectId,
+  rootThreadId: ThreadId,
+  threadId: ThreadId,
+  parentThreadId: Schema.optional(ThreadId),
+  agentKind: AgentKind,
+  depth: NonNegativeInt,
+  turnId: Schema.optional(TurnId),
+  spawnGroupId: Schema.optional(TrimmedNonEmptyString),
+  toolCallId: Schema.optional(TrimmedNonEmptyString),
+  toolCallGroupId: Schema.optional(ToolCallGroupId),
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  correlationId: TrimmedNonEmptyString,
+  timestamp: IsoDateTime,
+});
+export type AgentTraceContext = typeof AgentTraceContext.Type;
+
+export const ToolCallGroupTraceContext = Schema.Struct({
+  projectId: ProjectId,
+  rootThreadId: ThreadId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  toolCallGroupId: ToolCallGroupId,
+  toolCallId: Schema.optional(ToolCallId),
+  groupPolicy: ToolCallGroupPolicy,
+  status: TrimmedNonEmptyString,
+  correlationId: TrimmedNonEmptyString,
+  timestamp: IsoDateTime,
+});
+export type ToolCallGroupTraceContext = typeof ToolCallGroupTraceContext.Type;
+
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
   "interrupted",
@@ -516,6 +549,7 @@ export const OrchestrationAgentTreeSnapshotAgent = Schema.Struct({
   childrenCount: NonNegativeInt,
   createdAt: IsoDateTime,
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  trace: Schema.optional(AgentTraceContext),
 });
 export type OrchestrationAgentTreeSnapshotAgent = typeof OrchestrationAgentTreeSnapshotAgent.Type;
 
@@ -531,6 +565,32 @@ export const OrchestrationAgentTreeGetInput = Schema.Struct({
   rootThreadId: ThreadId,
 });
 export type OrchestrationAgentTreeGetInput = typeof OrchestrationAgentTreeGetInput.Type;
+
+export const OrchestrationAgentLifecycleOperation = Schema.Literals([
+  "interrupt",
+  "archive",
+  "unarchive",
+  "retry-failed-turn",
+]);
+export type OrchestrationAgentLifecycleOperation = typeof OrchestrationAgentLifecycleOperation.Type;
+
+export const OrchestrationAgentLifecycleControlInput = Schema.Struct({
+  threadId: ThreadId,
+  operation: OrchestrationAgentLifecycleOperation,
+  cascade: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  createdAt: Schema.optional(IsoDateTime),
+});
+export type OrchestrationAgentLifecycleControlInput =
+  typeof OrchestrationAgentLifecycleControlInput.Type;
+
+export const OrchestrationAgentLifecycleControlResult = Schema.Struct({
+  operation: OrchestrationAgentLifecycleOperation,
+  cascade: Schema.Boolean,
+  targetThreadIds: Schema.Array(ThreadId),
+  dispatchedThreadIds: Schema.Array(ThreadId),
+});
+export type OrchestrationAgentLifecycleControlResult =
+  typeof OrchestrationAgentLifecycleControlResult.Type;
 
 export const OrchestrationAgentTreeStreamItem = Schema.Struct({
   kind: Schema.Literal("snapshot"),
@@ -1021,11 +1081,13 @@ export const AgentSpawnRequestedPayload = Schema.Struct({
   spawnedByTurnId: Schema.optional(TurnId),
   spawnedByToolCallId: Schema.optional(TrimmedNonEmptyString),
   spawnGroupId: Schema.optional(TrimmedNonEmptyString),
+  trace: Schema.optional(AgentTraceContext),
   requestedAt: IsoDateTime,
 });
 
 export const AgentSpawnedPayload = Schema.Struct({
   metadata: AgentThreadMetadata,
+  trace: Schema.optional(AgentTraceContext),
   spawnedAt: IsoDateTime,
 });
 
@@ -1036,6 +1098,7 @@ export const AgentSpawnFailedPayload = Schema.Struct({
   projectId: ProjectId,
   agentKind: AgentKind,
   reason: TrimmedNonEmptyString,
+  trace: Schema.optional(AgentTraceContext),
   failedAt: IsoDateTime,
 });
 
@@ -1054,6 +1117,7 @@ export const AgentStatusChangedPayload = Schema.Struct({
   rootThreadId: ThreadId,
   parentThreadId: Schema.optional(ThreadId),
   status: AgentStatus,
+  trace: Schema.optional(AgentTraceContext),
   changedAt: IsoDateTime,
 });
 
@@ -1476,6 +1540,10 @@ export const OrchestrationRpcSchemas = {
   getAgentTree: {
     input: OrchestrationAgentTreeGetInput,
     output: OrchestrationAgentTreeSnapshot,
+  },
+  controlAgentLifecycle: {
+    input: OrchestrationAgentLifecycleControlInput,
+    output: OrchestrationAgentLifecycleControlResult,
   },
   getProjectModelAnalytics: {
     input: OrchestrationProjectModelAnalyticsInput,

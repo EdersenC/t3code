@@ -5,6 +5,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsPatch,
   ClientSettingsSchema,
+  DEFAULT_AGENTIC_RESOURCE_LIMITS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
@@ -198,6 +199,34 @@ describe("ServerSettings.capabilityRegistry", () => {
           activation: "hidden",
         },
       },
+    });
+  });
+});
+
+describe("ServerSettings.agenticResourceLimits", () => {
+  it("defaults agentic runtime limits for legacy server configs", () => {
+    expect(decodeServerSettings({}).agenticResourceLimits).toEqual(DEFAULT_AGENTIC_RESOURCE_LIMITS);
+  });
+
+  it("decodes agentic runtime limit patches", () => {
+    const patch = decodeServerSettingsPatch({
+      agenticResourceLimits: {
+        maxAgentDepth: 4,
+        maxChildrenPerAgent: 8,
+        maxActiveAgentsPerSession: 16,
+        maxToolCallsPerGroup: 12,
+        defaultToolGroupTimeoutMs: 30_000,
+        maxToolGroupTimeoutMs: 60_000,
+      },
+    });
+
+    expect(patch.agenticResourceLimits).toEqual({
+      maxAgentDepth: 4,
+      maxChildrenPerAgent: 8,
+      maxActiveAgentsPerSession: 16,
+      maxToolCallsPerGroup: 12,
+      defaultToolGroupTimeoutMs: 30_000,
+      maxToolGroupTimeoutMs: 60_000,
     });
   });
 });

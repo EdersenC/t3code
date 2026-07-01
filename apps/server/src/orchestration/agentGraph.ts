@@ -1,21 +1,43 @@
 import type {
   AgentKind,
+  AgentTraceContext,
+  AgenticResourceLimitsSettings,
   AgentThreadMetadata,
   OrchestrationAgentTree,
   OrchestrationAgentTreeNode,
+  OrchestrationAgentTreeStatus,
   OrchestrationProjectRootSessionAgentSummary,
   OrchestrationReadModel,
   OrchestrationSession,
   OrchestrationThread,
+  ProviderInstanceId,
   ProjectId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
+import { DEFAULT_AGENTIC_RESOURCE_LIMITS } from "@t3tools/contracts";
 
-export const AGENT_GRAPH_LIMITS = {
-  maxDepth: 8,
-  maxChildrenPerParent: 64,
-  maxActiveAgentsPerRoot: 64,
+export const DEFAULT_AGENT_GRAPH_LIMITS = {
+  maxDepth: DEFAULT_AGENTIC_RESOURCE_LIMITS.maxAgentDepth,
+  maxChildrenPerParent: DEFAULT_AGENTIC_RESOURCE_LIMITS.maxChildrenPerAgent,
+  maxActiveAgentsPerRoot: DEFAULT_AGENTIC_RESOURCE_LIMITS.maxActiveAgentsPerSession,
 } as const;
+
+export interface AgentGraphLimits {
+  readonly maxDepth: number;
+  readonly maxChildrenPerParent: number;
+  readonly maxActiveAgentsPerRoot: number;
+}
+
+export function agentGraphLimitsFromSettings(
+  limits: AgenticResourceLimitsSettings,
+): AgentGraphLimits {
+  return {
+    maxDepth: limits.maxAgentDepth,
+    maxChildrenPerParent: limits.maxChildrenPerAgent,
+    maxActiveAgentsPerRoot: limits.maxActiveAgentsPerSession,
+  };
+}
 
 export function agentMetadataForThread(thread: OrchestrationThread): AgentThreadMetadata {
   return (
@@ -33,6 +55,10 @@ export function agentMetadataForThread(thread: OrchestrationThread): AgentThread
 
 export function isActiveAgentSession(session: OrchestrationSession | null): boolean {
   return session?.status === "starting" || session?.status === "running";
+}
+
+export function isWaitingAgentThread(thread: OrchestrationThread): boolean {
+  return thread.session?.status === "running" && thread.latestTurn?.state === "running";
 }
 
 export function listDirectChildAgentThreads(
@@ -113,6 +139,99 @@ export function getAgentTreeForRootThread(
     root,
     activeAgentCount: nodes.filter((node) => isActiveAgentSession(node.session)).length,
     totalAgentCount: nodes.length,
+  };
+}
+
+export function agentStatusForThread(thread: OrchestrationThread): OrchestrationAgentTreeStatus {
+  if (thread.activities.some((activity) => activity.kind === "approval.requested")) {
+    return "waiting-on-user";
+  }
+  if (thread.latestTurn?.state === "error" || thread.session?.status === "error") {
+    return "failed";
+  }
+  if (thread.latestTurn?.state === "interrupted" || thread.session?.status === "interrupted") {
+    return "interrupted";
+  }
+  if (thread.session?.status === "running" || thread.session?.status === "starting") {
+    return "running";
+  }
+  if (thread.latestTurn?.state === "running") {
+    return "running";
+  }
+  if (thread.session?.status === "stopped") {
+    return "stopped";
+  }
+  if (thread.latestTurn?.state === "completed" || thread.session?.status === "ready") {
+    return "complete";
+  }
+  return "idle";
+}
+
+export function listActiveAgentThreads(
+  readModel: OrchestrationReadModel,
+  rootThreadId: ThreadId,
+): ReadonlyArray<OrchestrationThread> {
+  return readModel.threads.filter((thread) => {
+    const metadata = agentMetadataForThread(thread);
+    return (
+      metadata.rootThreadId === rootThreadId &&
+      thread.deletedAt === null &&
+      isActiveAgentSession(thread.session)
+    );
+  });
+}
+
+export function listBlockedOrWaitingAgentThreads(
+  readModel: OrchestrationReadModel,
+  rootThreadId: ThreadId,
+): ReadonlyArray<OrchestrationThread> {
+  return readModel.threads.filter((thread) => {
+    const metadata = agentMetadataForThread(thread);
+    const status = agentStatusForThread(thread);
+    return (
+      metadata.rootThreadId === rootThreadId &&
+      thread.deletedAt === null &&
+      (status === "waiting-on-tools" ||
+        status === "waiting-on-user" ||
+        isWaitingAgentThread(thread))
+    );
+  });
+}
+
+export function flattenAgentTreeNodes(
+  node: OrchestrationAgentTreeNode,
+): ReadonlyArray<OrchestrationAgentTreeNode> {
+  return [node, ...node.children.flatMap(flattenAgentTreeNodes)];
+}
+
+export function makeAgentTraceContext(input: {
+  readonly thread: OrchestrationThread;
+  readonly timestamp: string;
+  readonly correlationId: string;
+  readonly turnId?: TurnId | null;
+  readonly toolCallId?: string | undefined;
+  readonly toolCallGroupId?: string | undefined;
+  readonly providerInstanceId?: ProviderInstanceId | undefined;
+}): AgentTraceContext {
+  const metadata = agentMetadataForThread(input.thread);
+  return {
+    projectId: input.thread.projectId,
+    rootThreadId: metadata.rootThreadId,
+    threadId: input.thread.id,
+    ...(metadata.parentThreadId !== undefined ? { parentThreadId: metadata.parentThreadId } : {}),
+    agentKind: metadata.agentKind,
+    depth: metadata.depth,
+    ...(input.turnId !== undefined && input.turnId !== null ? { turnId: input.turnId } : {}),
+    ...(metadata.spawnGroupId !== undefined ? { spawnGroupId: metadata.spawnGroupId } : {}),
+    ...(input.toolCallId !== undefined ? { toolCallId: input.toolCallId } : {}),
+    ...(input.toolCallGroupId !== undefined
+      ? { toolCallGroupId: input.toolCallGroupId as AgentTraceContext["toolCallGroupId"] }
+      : {}),
+    ...(input.providerInstanceId !== undefined
+      ? { providerInstanceId: input.providerInstanceId }
+      : {}),
+    correlationId: input.correlationId,
+    timestamp: input.timestamp,
   };
 }
 

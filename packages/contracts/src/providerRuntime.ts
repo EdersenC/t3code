@@ -15,6 +15,7 @@ import {
 } from "./baseSchemas.ts";
 import { T3CapabilityEventProvenance } from "./capability.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { ToolCallGroupTraceContext } from "./orchestration.ts";
 import {
   ToolCallGroupId,
   ToolCallGroupItemStatus,
@@ -557,6 +558,7 @@ const ToolGroupStartedPayload = Schema.Struct({
   expectedCount: NonNegativeInt,
   title: Schema.optional(TrimmedNonEmptyStringSchema),
   timeoutMs: Schema.optional(NonNegativeInt),
+  trace: Schema.optional(ToolCallGroupTraceContext),
 });
 export type ToolGroupStartedPayload = typeof ToolGroupStartedPayload.Type;
 
@@ -568,6 +570,7 @@ const ToolGroupItemPayload = Schema.Struct({
   status: ToolCallGroupItemStatus,
   result: Schema.optional(Schema.Unknown),
   error: Schema.optional(Schema.Unknown),
+  trace: Schema.optional(ToolCallGroupTraceContext),
 });
 export type ToolGroupItemPayload = typeof ToolGroupItemPayload.Type;
 
@@ -576,6 +579,7 @@ const ToolGroupTerminalPayload = Schema.Struct({
   policy: ToolCallGroupPolicy,
   result: Schema.optional(ToolCallGroupedResult),
   reason: Schema.optional(TrimmedNonEmptyStringSchema),
+  trace: Schema.optional(ToolCallGroupTraceContext),
 });
 export type ToolGroupTerminalPayload = typeof ToolGroupTerminalPayload.Type;
 

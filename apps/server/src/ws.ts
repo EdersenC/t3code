@@ -25,12 +25,15 @@ import {
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
+  MessageId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type OrchestrationAgentTreeNode,
   type OrchestrationAgentTreeSnapshot,
   type OrchestrationAgentTreeStatus,
+  type OrchestrationAgentLifecycleControlInput,
+  type OrchestrationAgentLifecycleControlResult,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -285,6 +288,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getFullThreadDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getAgentTree, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.controlAgentLifecycle, AuthOrchestrationOperateScope],
   [ORCHESTRATION_WS_METHODS.getProjectModelAnalytics, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.replayEvents, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
@@ -798,6 +802,199 @@ const makeWsRpcLayer = (
           ),
         );
 
+      const flattenAgentTreeNodesForLifecycle = (
+        node: OrchestrationAgentTreeNode,
+      ): ReadonlyArray<OrchestrationAgentTreeNode> => [
+        node,
+        ...node.children.flatMap(flattenAgentTreeNodesForLifecycle),
+      ];
+
+      const lifecycleTargetNodes = (input: {
+        readonly threadId: ThreadId;
+        readonly cascade: boolean;
+      }): Effect.Effect<ReadonlyArray<OrchestrationAgentTreeNode>, OrchestrationGetSnapshotError> =>
+        projectionSnapshotQuery.getRootThreadForAgentThread(input.threadId).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new OrchestrationGetSnapshotError({
+                    message: `Agent thread ${input.threadId} was not found`,
+                    cause: input.threadId,
+                  }),
+                ),
+              onSome: (rootThread) =>
+                projectionSnapshotQuery.getAgentTreeByRootThreadId(rootThread.id).pipe(
+                  Effect.flatMap(
+                    Option.match({
+                      onNone: () =>
+                        Effect.fail(
+                          new OrchestrationGetSnapshotError({
+                            message: `Agent tree root ${rootThread.id} was not found`,
+                            cause: rootThread.id,
+                          }),
+                        ),
+                      onSome: (tree) => {
+                        const allNodes = flattenAgentTreeNodesForLifecycle(tree.root);
+                        const targetNode = allNodes.find(
+                          (node) => node.threadId === input.threadId,
+                        );
+                        if (!targetNode) {
+                          return Effect.fail(
+                            new OrchestrationGetSnapshotError({
+                              message: `Agent thread ${input.threadId} is not in root ${rootThread.id}`,
+                              cause: input.threadId,
+                            }),
+                          );
+                        }
+                        return Effect.succeed(
+                          input.cascade
+                            ? flattenAgentTreeNodesForLifecycle(targetNode)
+                            : [targetNode],
+                        );
+                      },
+                    }),
+                  ),
+                ),
+            }),
+          ),
+          Effect.mapError((cause) =>
+            isOrchestrationGetSnapshotError(cause)
+              ? cause
+              : new OrchestrationGetSnapshotError({
+                  message: "Failed to resolve agent lifecycle targets",
+                  cause,
+                }),
+          ),
+        );
+
+      const controlAgentLifecycle = (input: {
+        readonly threadId: ThreadId;
+        readonly operation: "interrupt" | "archive" | "unarchive" | "retry-failed-turn";
+        readonly cascade: boolean;
+        readonly createdAt?: string | undefined;
+      }): Effect.Effect<
+        OrchestrationAgentLifecycleControlResult,
+        OrchestrationDispatchCommandError | OrchestrationGetSnapshotError
+      > =>
+        Effect.gen(function* () {
+          const createdAt = input.createdAt ?? (yield* nowIso);
+          const targetNodes =
+            input.operation === "retry-failed-turn"
+              ? yield* lifecycleTargetNodes({ threadId: input.threadId, cascade: false })
+              : yield* lifecycleTargetNodes({ threadId: input.threadId, cascade: input.cascade });
+          const targetThreadIds = targetNodes.map((node) => node.threadId);
+          const dispatchedThreadIds: ThreadId[] = [];
+
+          if (input.operation === "retry-failed-turn") {
+            const threadOption = yield* projectionSnapshotQuery
+              .getThreadDetailById(input.threadId)
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGetSnapshotError({
+                      message: "Failed to load agent thread for retry",
+                      cause,
+                    }),
+                ),
+              );
+            const thread = Option.getOrUndefined(threadOption);
+            if (!thread) {
+              return yield* Effect.fail(
+                new OrchestrationGetSnapshotError({
+                  message: `Agent thread ${input.threadId} was not found`,
+                  cause: input.threadId,
+                }),
+              );
+            }
+            if (
+              thread.latestTurn?.state !== "error" &&
+              thread.latestTurn?.state !== "interrupted"
+            ) {
+              return {
+                operation: input.operation,
+                cascade: false,
+                targetThreadIds,
+                dispatchedThreadIds,
+              };
+            }
+            const lastUserMessage = thread.messages
+              .toReversed()
+              .find((message) => message.role === "user" && message.text.trim().length > 0);
+            if (!lastUserMessage) {
+              return yield* Effect.fail(
+                new OrchestrationGetSnapshotError({
+                  message: `Agent thread ${input.threadId} has no user message to retry`,
+                  cause: input.threadId,
+                }),
+              );
+            }
+            yield* dispatchNormalizedCommand({
+              type: "thread.turn.start",
+              commandId: yield* serverCommandId("agent-retry"),
+              threadId: thread.id,
+              message: {
+                messageId: MessageId.make(`agent-retry:${yield* randomUUID}`),
+                role: "user",
+                text: lastUserMessage.text,
+                attachments: lastUserMessage.attachments ?? [],
+              },
+              modelSelection: thread.modelSelection,
+              titleSeed: thread.title,
+              runtimeMode: thread.runtimeMode,
+              interactionMode: thread.interactionMode,
+              createdAt,
+            });
+            dispatchedThreadIds.push(thread.id);
+            return {
+              operation: input.operation,
+              cascade: false,
+              targetThreadIds,
+              dispatchedThreadIds,
+            };
+          }
+
+          for (const threadId of targetThreadIds) {
+            switch (input.operation) {
+              case "interrupt": {
+                yield* dispatchNormalizedCommand({
+                  type: "thread.turn.interrupt",
+                  commandId: yield* serverCommandId("agent-interrupt"),
+                  threadId,
+                  createdAt,
+                });
+                dispatchedThreadIds.push(threadId);
+                break;
+              }
+              case "archive": {
+                yield* dispatchNormalizedCommand({
+                  type: "thread.archive",
+                  commandId: yield* serverCommandId("agent-archive"),
+                  threadId,
+                });
+                dispatchedThreadIds.push(threadId);
+                break;
+              }
+              case "unarchive": {
+                yield* dispatchNormalizedCommand({
+                  type: "thread.unarchive",
+                  commandId: yield* serverCommandId("agent-unarchive"),
+                  threadId,
+                });
+                dispatchedThreadIds.push(threadId);
+                break;
+              }
+            }
+          }
+
+          return {
+            operation: input.operation,
+            cascade: input.cascade,
+            targetThreadIds,
+            dispatchedThreadIds,
+          };
+        });
+
       const dispatchBootstrapTurnStart = (
         command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
@@ -1172,6 +1369,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getAgentTree,
             loadAgentTreeSnapshot(input.rootThreadId),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.controlAgentLifecycle]: (
+          input: OrchestrationAgentLifecycleControlInput,
+        ) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.controlAgentLifecycle,
+            controlAgentLifecycle(input),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.getProjectModelAnalytics]: (input) =>

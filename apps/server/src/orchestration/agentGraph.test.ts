@@ -6,14 +6,18 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  ToolCallGroupId,
+  ToolCallId,
+  TurnId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import * as ToolCallGroupBarrier from "../provider/ToolCallGroupBarrier.ts";
 import {
-  AGENT_GRAPH_LIMITS,
+  DEFAULT_AGENT_GRAPH_LIMITS,
   findRootThreadForAgentThread,
   getAgentTreeForRootThread,
   listProjectRootSessionAgentSummaries,
@@ -26,6 +30,9 @@ const asCommandId = (value: string): CommandId => CommandId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const asToolCallGroupId = (value: string): ToolCallGroupId => ToolCallGroupId.make(value);
+const asToolCallId = (value: string): ToolCallId => ToolCallId.make(value);
+const asTurnId = (value: string): TurnId => TurnId.make(value);
 
 type PlannedEvent = Omit<OrchestrationEvent, "sequence">;
 
@@ -180,6 +187,16 @@ it.layer(NodeServices.layer)("agent graph", (it) => {
         "thread.created",
         "agent.spawned",
       ]);
+      const spawnRequested = child.events.find((event) => event.type === "agent.spawn.requested");
+      expect(spawnRequested?.payload.trace).toMatchObject({
+        projectId,
+        rootThreadId,
+        threadId: childThreadId,
+        parentThreadId: rootThreadId,
+        agentKind: "explore",
+        depth: 1,
+        correlationId: `cmd-create-${childThreadId}`,
+      });
       expect(
         child.readModel.threads.find((thread) => thread.id === childThreadId)?.agentMetadata,
       ).toMatchObject({
@@ -296,7 +313,7 @@ it.layer(NodeServices.layer)("agent graph", (it) => {
       )).readModel;
 
       let parentThreadId = rootThreadId;
-      for (let depth = 1; depth <= AGENT_GRAPH_LIMITS.maxDepth; depth += 1) {
+      for (let depth = 1; depth <= DEFAULT_AGENT_GRAPH_LIMITS.maxDepth; depth += 1) {
         const threadId = asThreadId(`thread-depth-${depth}`);
         state = (yield* decideAndProject(
           state,
@@ -321,7 +338,7 @@ it.layer(NodeServices.layer)("agent graph", (it) => {
           agentKind: "custom",
         }),
       }).pipe(Effect.flip);
-      expect(error.message).toContain(`exceeds max depth ${AGENT_GRAPH_LIMITS.maxDepth}`);
+      expect(error.message).toContain(`exceeds max depth ${DEFAULT_AGENT_GRAPH_LIMITS.maxDepth}`);
     }),
   );
 
@@ -362,5 +379,150 @@ it.layer(NodeServices.layer)("agent graph", (it) => {
         getAgentTreeForRootThread(child.readModel, rootThreadId),
       );
     }),
+  );
+
+  it.effect("replays recursive fanout and keeps grouped tool results behind one barrier", () =>
+    Effect.gen(function* () {
+      const projectId = asProjectId("project-agentic-e2e");
+      const rootThreadId = asThreadId("thread-root-e2e");
+      const childOneId = asThreadId("thread-child-one-e2e");
+      const childTwoId = asThreadId("thread-child-two-e2e");
+      const childThreeId = asThreadId("thread-child-three-e2e");
+      const grandchildId = asThreadId("thread-grandchild-e2e");
+      const withProject = yield* seedProject(projectId);
+      const committedEvents: OrchestrationEvent[] = [projectCreated(projectId)];
+      let model = withProject;
+      let sequence = model.snapshotSequence;
+      const applyCommand = Effect.fn("agentGraphTest.applyCommand")(function* (
+        command: OrchestrationCommand,
+      ) {
+        const decided = yield* decideOrchestrationCommand({ command, readModel: model });
+        const events = Array.isArray(decided) ? decided : [decided];
+        for (const event of events) {
+          sequence += 1;
+          const committed = { ...event, sequence } as OrchestrationEvent;
+          committedEvents.push(committed);
+          model = yield* projectEvent(model, committed);
+        }
+      });
+
+      yield* applyCommand(createThreadCommand({ threadId: rootThreadId, projectId }));
+      yield* applyCommand(
+        createThreadCommand({
+          threadId: childOneId,
+          projectId,
+          rootThreadId,
+          parentThreadId: rootThreadId,
+          agentKind: "explore",
+        }),
+      );
+      yield* applyCommand(
+        createThreadCommand({
+          threadId: childTwoId,
+          projectId,
+          rootThreadId,
+          parentThreadId: rootThreadId,
+          agentKind: "implement",
+        }),
+      );
+      yield* applyCommand(
+        createThreadCommand({
+          threadId: childThreeId,
+          projectId,
+          rootThreadId,
+          parentThreadId: rootThreadId,
+          agentKind: "review",
+        }),
+      );
+      yield* applyCommand(
+        createThreadCommand({
+          threadId: grandchildId,
+          projectId,
+          rootThreadId,
+          parentThreadId: childTwoId,
+          agentKind: "custom",
+        }),
+      );
+
+      const tree = getAgentTreeForRootThread(model, rootThreadId);
+      expect(tree?.totalAgentCount).toBe(5);
+      expect(tree?.root.children.map((node) => node.threadId).toSorted()).toEqual(
+        [childOneId, childTwoId, childThreeId].toSorted(),
+      );
+      const childTwoNode = tree?.root.children.find((node) => node.threadId === childTwoId);
+      expect(childTwoNode?.children.map((node) => node.threadId)).toEqual([grandchildId]);
+
+      const interrupted = yield* decideOrchestrationCommand({
+        readModel: model,
+        command: {
+          type: "thread.turn.interrupt",
+          commandId: asCommandId("cmd-interrupt-child-one"),
+          threadId: childOneId,
+          createdAt: now,
+        },
+      });
+      const interruptedEvents = Array.isArray(interrupted) ? interrupted : [interrupted];
+      expect(interruptedEvents).toHaveLength(1);
+      expect(interruptedEvents[0]?.type).toBe("thread.turn-interrupt-requested");
+      expect(interruptedEvents[0]?.payload.threadId).toBe(childOneId);
+
+      const barrier = yield* ToolCallGroupBarrier.ToolCallGroupBarrier;
+      const toolGroupId = asToolCallGroupId("group-agentic-e2e");
+      const toolA = asToolCallId("tool-a");
+      const toolB = asToolCallId("tool-b");
+      const toolC = asToolCallId("tool-c");
+      yield* barrier.openGroup({
+        groupId: toolGroupId,
+        threadId: childTwoId,
+        turnId: asTurnId("turn-child-two-e2e"),
+        policy: "barrier",
+        expectedToolCallIds: [toolA, toolB, toolC],
+        createdAt: now,
+      });
+      yield* barrier.recordItemStarted({
+        groupId: toolGroupId,
+        toolCallId: toolA,
+        index: 0,
+        name: "first",
+      });
+      yield* barrier.recordItemStarted({
+        groupId: toolGroupId,
+        toolCallId: toolB,
+        index: 1,
+        name: "second",
+      });
+      yield* barrier.recordItemStarted({
+        groupId: toolGroupId,
+        toolCallId: toolC,
+        index: 2,
+        name: "third",
+      });
+      yield* barrier.recordTerminalItem({
+        groupId: toolGroupId,
+        toolCallId: toolC,
+        status: "completed",
+        result: "c",
+      });
+      yield* barrier.recordTerminalItem({
+        groupId: toolGroupId,
+        toolCallId: toolA,
+        status: "completed",
+        result: "a",
+      });
+      const grouped = yield* barrier.recordTerminalItem({
+        groupId: toolGroupId,
+        toolCallId: toolB,
+        status: "completed",
+        result: "b",
+      });
+      expect(grouped.flushed).toBe(true);
+      expect(grouped.result?.results.map((item) => item.toolCallId)).toEqual([toolA, toolB, toolC]);
+
+      let replayed = createEmptyReadModel(now);
+      for (const event of committedEvents) {
+        replayed = yield* projectEvent(replayed, event);
+      }
+      expect(getAgentTreeForRootThread(replayed, rootThreadId)).toEqual(tree);
+    }).pipe(Effect.provide(ToolCallGroupBarrier.layer)),
   );
 });

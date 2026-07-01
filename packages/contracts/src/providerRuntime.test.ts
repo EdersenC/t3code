@@ -100,9 +100,24 @@ describe("ProviderRuntimeEvent", () => {
         expectedToolCallIds: ["tool-a", "tool-b", "tool-c"],
         expectedCount: 3,
         title: "Repository inspection",
+        trace: {
+          projectId: "project-1",
+          rootThreadId: "thread-root",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          toolCallGroupId: "tool-group-1",
+          groupPolicy: "barrier",
+          status: "started",
+          correlationId: "event-tool-group-started",
+          timestamp: "2026-02-28T00:00:00.000Z",
+        },
       },
     });
     expect(started.type).toBe("tool.group.started");
+    if (started.type !== "tool.group.started") {
+      throw new Error("expected tool.group.started");
+    }
+    expect(started.payload.trace?.rootThreadId).toBe("thread-root");
 
     const completed = decodeRuntimeEvent({
       type: "tool.group.completed",
