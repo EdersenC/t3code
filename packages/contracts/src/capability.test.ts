@@ -23,7 +23,6 @@ describe("T3SubagentRunInput", () => {
       agents: [
         {
           type: null,
-          agentKind: "custom",
           title: "General agent",
           prompt: "Summarize the current task.",
         },
@@ -32,8 +31,16 @@ describe("T3SubagentRunInput", () => {
 
     expect(parsed.agents?.[0]).toMatchObject({
       type: null,
-      agentKind: "custom",
       title: "General agent",
     });
+  });
+
+  it("rejects removed legacy T3 agent profile values", () => {
+    expect(() =>
+      decodeSubagentInput({
+        subagentType: "review",
+        prompt: "Review this.",
+      }),
+    ).toThrow();
   });
 });

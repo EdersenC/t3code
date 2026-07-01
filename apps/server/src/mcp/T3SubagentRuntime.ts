@@ -6,7 +6,6 @@ import {
   type OrchestrationThread,
   type ProviderInstanceId,
   RuntimeMode,
-  type AgentKind,
   type T3SubagentRunChildResult,
   type T3SubagentRunError,
   type T3SubagentRunInput,
@@ -29,7 +28,6 @@ import {
 } from "../capabilities/T3CapabilityRegistry.ts";
 import {
   agentGraphLimitsFromSettings,
-  agentKindForSubagentType,
   agentMetadataForThread,
   makeAgentTraceContext,
 } from "../orchestration/agentGraph.ts";
@@ -51,7 +49,7 @@ const makeError = (code: T3SubagentRunError["code"], message: string): T3Subagen
 
 interface NormalizedSubagentSpec {
   readonly subagentType: T3SubagentType;
-  readonly agentKind: AgentKind;
+  readonly agentKind: "custom";
   readonly title: string;
   readonly prompt: string;
   readonly priority?: number;
@@ -66,41 +64,19 @@ interface NormalizedSpawnRequest {
   readonly agents: ReadonlyArray<NormalizedSubagentSpec>;
 }
 
-const titleFor = (type: T3SubagentType, title?: string): string =>
-  title ??
-  (type === DEFAULT_SUBAGENT_TYPE ? "Subagent" : `${type[0]?.toUpperCase()}${type.slice(1)}`);
+const titleFor = (_type: T3SubagentType, title?: string): string => title ?? "Subagent";
 
 const runtimeModeFor = (_type: T3SubagentType, parentRuntimeMode: RuntimeMode): RuntimeMode =>
   parentRuntimeMode;
 
-const profileInstruction = (type: T3SubagentType): string => {
-  switch (type) {
-    case "explore":
-      return [
-        "You are the T3 explore subagent.",
-        "Inspect the codebase, gather evidence, and report findings without editing files.",
-      ].join("\n");
-    case "implement":
-      return [
-        "You are the T3 implement subagent.",
-        "Make a narrow code change, keep edits scoped, and report verification evidence.",
-      ].join("\n");
-    case "review":
-      return [
-        "You are the T3 review subagent.",
-        "Review for bugs, regressions, missing tests, and contract drift. Lead with findings.",
-      ].join("\n");
-    case "custom":
-      return [
-        "You are a T3 general-purpose subagent running as a child session.",
-        "Complete the assigned task and return a concise result for the parent agent.",
-        "Include enough context for the parent agent to understand what you did, what you found, and any useful next step.",
-      ].join("\n");
-  }
-};
+const SUBAGENT_INSTRUCTIONS = [
+  "You are a T3 general-purpose subagent running as a child session.",
+  "T3 Code is the primary orchestration harness. Complete the assigned task under T3's session, project, tool, and permission context.",
+  "Return a concise result for the parent agent with enough context to understand what you did, what you found, and any useful next step.",
+].join("\n");
 
 function buildPrompt(spec: NormalizedSubagentSpec): string {
-  return [profileInstruction(spec.subagentType), "", spec.prompt].join("\n");
+  return [SUBAGENT_INSTRUCTIONS, "", spec.prompt].join("\n");
 }
 
 function normalizeSubagentSpec(
@@ -108,10 +84,9 @@ function normalizeSubagentSpec(
 ): Effect.Effect<NormalizedSubagentSpec, T3SubagentRunError> {
   const subagentType =
     spec.subagentType ?? spec.subagent_type ?? spec.type ?? DEFAULT_SUBAGENT_TYPE;
-  const agentKind = spec.agentKind ?? agentKindForSubagentType(subagentType);
   return Effect.succeed({
     subagentType,
-    agentKind,
+    agentKind: "custom",
     title: titleFor(subagentType, spec.title ?? spec.displayName),
     prompt: spec.prompt,
     ...(spec.priority !== undefined ? { priority: spec.priority } : {}),

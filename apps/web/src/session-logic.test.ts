@@ -1023,7 +1023,7 @@ describe("deriveWorkLogEntries", () => {
           capabilityKind: "tool",
           capabilitySource: "t3",
           toolName: "t3_subagent",
-          subagentType: "explore",
+          subagentType: "custom",
           childThreadId: "thread-child",
         },
       }),
@@ -1055,14 +1055,14 @@ describe("deriveWorkLogEntries", () => {
           children: [
             {
               threadId: "thread-child-explore",
-              title: "Explore Agent",
-              type: "explore",
+              title: "Subagent A",
+              type: "custom",
               status: "started",
             },
             {
               threadId: "thread-child-review",
-              title: "Review Agent",
-              type: "review",
+              title: "Subagent B",
+              type: "custom",
               status: "started",
             },
           ],
@@ -1080,14 +1080,14 @@ describe("deriveWorkLogEntries", () => {
       subagentChildren: [
         {
           threadId: ThreadId.make("thread-child-explore"),
-          title: "Explore Agent",
-          type: "explore",
+          title: "Subagent A",
+          type: "custom",
           status: "started",
         },
         {
           threadId: ThreadId.make("thread-child-review"),
-          title: "Review Agent",
-          type: "review",
+          title: "Subagent B",
+          type: "custom",
           status: "started",
         },
       ],

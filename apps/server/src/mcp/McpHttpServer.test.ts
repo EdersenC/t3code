@@ -373,7 +373,7 @@ it.effect("registers the T3 subagent toolkit with the production runtime", () =>
         .callTool({
           name: "t3_subagent",
           arguments: {
-            subagentType: "review",
+            title: "Code review",
             prompt: "Review the pending change.",
           },
         })
@@ -390,16 +390,16 @@ it.effect("registers the T3 subagent toolkit with the production runtime", () =>
         status: "started",
         parentThreadId: threadId,
         rootThreadId: threadId,
-        subagentType: "review",
-        title: "Review",
+        subagentType: "custom",
+        title: "Code review",
         children: [
           {
             status: "started",
             parentThreadId: threadId,
             rootThreadId: threadId,
-            subagentType: "review",
-            agentKind: "review",
-            title: "Review",
+            subagentType: "custom",
+            agentKind: "custom",
+            title: "Code review",
           },
         ],
       });
@@ -419,8 +419,8 @@ it.effect("registers the T3 subagent toolkit with the production runtime", () =>
         rootThreadId: threadId,
         parentThreadId: threadId,
         agentRole: "subagent",
-        agentKind: "review",
-        displayName: "Review",
+        agentKind: "custom",
+        displayName: "Code review",
       });
 
       const activityCommand = dispatched[2] as Extract<
@@ -439,9 +439,9 @@ it.effect("registers the T3 subagent toolkit with the production runtime", () =>
         rootThreadId: threadId,
         children: [
           {
-            title: "Review",
-            type: "review",
-            agentKind: "review",
+            title: "Code review",
+            type: "custom",
+            agentKind: "custom",
             status: "started",
           },
         ],
@@ -451,7 +451,9 @@ it.effect("registers the T3 subagent toolkit with the production runtime", () =>
         OrchestrationCommand,
         { type: "thread.turn.start" }
       >;
-      expect(turnCommand.message.text).toContain("You are the T3 review subagent.");
+      expect(turnCommand.message.text).toContain(
+        "You are a T3 general-purpose subagent running as a child session.",
+      );
       expect(turnCommand.message.text).toContain("Review the pending change.");
     }),
   ).pipe(Effect.provide(makeSubagentProductionLayer(dispatched)));
@@ -537,17 +539,14 @@ it.effect("fans out one T3 subagent tool call into multiple child sessions", () 
             spawnGroupId: "spawn-group-test",
             agents: [
               {
-                type: "explore",
                 title: "Research current auth flow",
                 prompt: "Inspect the auth code and summarize risks.",
               },
               {
-                type: "implement",
                 title: "Refactor agent graph contracts",
                 prompt: "Implement the graph contract layer.",
               },
               {
-                type: "review",
                 title: "Review migration plan",
                 prompt: "Review the contract migration for edge cases.",
               },
@@ -570,18 +569,18 @@ it.effect("fans out one T3 subagent tool call into multiple child sessions", () 
         spawnGroupId: "spawn-group-test",
         children: [
           {
-            subagentType: "explore",
-            agentKind: "explore",
+            subagentType: "custom",
+            agentKind: "custom",
             title: "Research current auth flow",
           },
           {
-            subagentType: "implement",
-            agentKind: "implement",
+            subagentType: "custom",
+            agentKind: "custom",
             title: "Refactor agent graph contracts",
           },
           {
-            subagentType: "review",
-            agentKind: "review",
+            subagentType: "custom",
+            agentKind: "custom",
             title: "Review migration plan",
           },
         ],
@@ -628,9 +627,9 @@ it.effect("fans out one T3 subagent tool call into multiple child sessions", () 
         parentThreadId: threadId,
         rootThreadId: threadId,
         children: [
-          { title: "Research current auth flow", type: "explore", status: "started" },
-          { title: "Refactor agent graph contracts", type: "implement", status: "started" },
-          { title: "Review migration plan", type: "review", status: "started" },
+          { title: "Research current auth flow", type: "custom", status: "started" },
+          { title: "Refactor agent graph contracts", type: "custom", status: "started" },
+          { title: "Review migration plan", type: "custom", status: "started" },
         ],
       });
     }),
@@ -647,7 +646,6 @@ it.effect("buffers grouped T3 subagent MCP results until every grouped call is t
           .callTool({
             name: "t3_subagent",
             arguments: {
-              subagentType: "review",
               prompt,
               parentTurnId,
               toolCallGroupId: "tool-group-subagents",
@@ -736,7 +734,7 @@ it.effect("serves T3 subagent calls through authenticated HTTP MCP", () => {
           "mcp-session-id": sessionId!,
         },
         body: HttpBody.text(
-          `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"t3_subagent","arguments":{"subagentType":"review","prompt":"Review the HTTP MCP path."}}}`,
+          `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"t3_subagent","arguments":{"prompt":"Review the HTTP MCP path."}}}`,
           "application/json",
         ),
       });
@@ -752,7 +750,7 @@ it.effect("serves T3 subagent calls through authenticated HTTP MCP", () => {
         status: "started",
         parentThreadId: threadId,
         rootThreadId: threadId,
-        subagentType: "review",
+        subagentType: "custom",
       });
       expect(dispatched.map((command) => command.type)).toEqual([
         "thread.create",
