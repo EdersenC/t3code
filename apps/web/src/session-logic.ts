@@ -1090,7 +1090,7 @@ function normalizeExecutableArgsCommand(value: unknown): string | null {
   }
   const executablePart = formatCommandArrayPart(executable);
   const args = normalizeCommandValue(record.args);
-  return args ? `${executablePart} ${args}` : executablePart;
+  return args ? `${executablePart} ${args}` : null;
 }
 
 function toRawToolCommand(value: unknown, normalizedCommand: string | null): string | null {
