@@ -77,6 +77,7 @@ import {
 import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { prefixT3HarnessPromptText } from "../T3HarnessInstructions.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 
 const PROVIDER = ProviderDriverKind.make("cursor");
@@ -947,12 +948,21 @@ export function makeCursorAdapter(
             });
           }
 
-          const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
-          if (input.input?.trim()) {
-            promptParts.push({ type: "text", text: input.input.trim() });
+          const rawText = input.input?.trim() ?? "";
+          const attachments = input.attachments ?? [];
+          if (rawText.length === 0 && attachments.length === 0) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "sendTurn",
+              issue: "Turn requires non-empty text or attachments.",
+            });
           }
-          if (input.attachments && input.attachments.length > 0) {
-            for (const attachment of input.attachments) {
+
+          const promptParts: Array<EffectAcpSchema.ContentBlock> = [
+            { type: "text", text: prefixT3HarnessPromptText(rawText) },
+          ];
+          if (attachments.length > 0) {
+            for (const attachment of attachments) {
               const attachmentPath = resolveAttachmentPath({
                 attachmentsDir: serverConfig.attachmentsDir,
                 attachment,
@@ -981,14 +991,6 @@ export function makeCursorAdapter(
                 mimeType: attachment.mimeType,
               });
             }
-          }
-
-          if (promptParts.length === 0) {
-            return yield* new ProviderAdapterValidationError({
-              provider: PROVIDER,
-              operation: "sendTurn",
-              issue: "Turn requires non-empty text or attachments.",
-            });
           }
 
           const result = yield* ctx.acp

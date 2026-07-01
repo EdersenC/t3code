@@ -54,6 +54,7 @@ import {
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
 import * as Option from "effect/Option";
+import { mergeT3HarnessSystemPrompt } from "../T3HarnessInstructions.ts";
 
 import { detailFromKnownErrorShape } from "../errorShapeUtils.ts";
 
@@ -1948,9 +1949,7 @@ export function makeOpenCodeAdapter(
           model: parsedModel,
           ...(context.activeAgent ? { agent: context.activeAgent } : {}),
           ...(context.activeVariant ? { variant: context.activeVariant } : {}),
-          ...(context.capabilityRuntime?.preloadSystemPrompt
-            ? { system: context.capabilityRuntime.preloadSystemPrompt }
-            : {}),
+          system: mergeT3HarnessSystemPrompt(context.capabilityRuntime?.preloadSystemPrompt),
           parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
         }),
       ).pipe(

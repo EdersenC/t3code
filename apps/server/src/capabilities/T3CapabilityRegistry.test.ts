@@ -26,13 +26,7 @@ it.layer(NodeServices.layer)("T3CapabilityRegistry", (it) => {
 
       assert.deepEqual(
         registry.snapshot.capabilities.map((capability) => capability.id),
-        [
-          "t3:command:tools",
-          "t3:subagent:explore",
-          "t3:subagent:implement",
-          "t3:subagent:review",
-          "t3:tool:subagent",
-        ],
+        ["t3:command:tools", "t3:skill:random-subagent-test", "t3:tool:subagent"],
       );
       assert.isUndefined(registry.preloadSystemPrompt);
       assert.deepInclude(
@@ -44,12 +38,12 @@ it.layer(NodeServices.layer)("T3CapabilityRegistry", (it) => {
       );
       assert.deepInclude(
         registry.snapshot.capabilities.find(
-          (capability) => capability.id === "t3:subagent:explore",
+          (capability) => capability.id === "t3:skill:random-subagent-test",
         ),
         {
-          kind: "subagent",
-          toolName: "t3_subagent",
-          subagentType: "explore",
+          kind: "skill",
+          activation: "on-demand",
+          name: "random-subagent-test",
         },
       );
       for (const capability of registry.snapshot.capabilities) {
@@ -164,7 +158,7 @@ it.layer(NodeServices.layer)("T3CapabilityRegistry", (it) => {
           capabilityRegistry: {
             skillRoots: [],
             overrides: {
-              "t3:subagent:review": {
+              "t3:skill:random-subagent-test": {
                 enabled: false,
                 activation: "hidden",
               },
@@ -180,13 +174,13 @@ it.layer(NodeServices.layer)("T3CapabilityRegistry", (it) => {
 
       assert.deepInclude(
         overridden.snapshot.capabilities.find(
-          (capability) => capability.id === "t3:subagent:review",
+          (capability) => capability.id === "t3:skill:random-subagent-test",
         ),
         { enabled: false, activation: "hidden" },
       );
       assert.deepInclude(
         defaultRegistry.snapshot.capabilities.find(
-          (capability) => capability.id === "t3:subagent:review",
+          (capability) => capability.id === "t3:skill:random-subagent-test",
         ),
         { enabled: true, activation: "on-demand" },
       );
@@ -218,9 +212,10 @@ it.layer(NodeServices.layer)("T3CapabilityRegistry", (it) => {
     }),
   );
 
-  it.effect("does not materialize built-in tools or subagents as OpenCode skills", () =>
+  it.effect("materializes the built-in random subagent test skill", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const runtimeRoot = yield* fs.makeTempDirectoryScoped({
         prefix: "t3-opencode-capabilities-",
       });
@@ -231,9 +226,14 @@ it.layer(NodeServices.layer)("T3CapabilityRegistry", (it) => {
         runtimeRoot,
       });
 
-      assert.deepEqual(runtime.skillPaths, []);
-      assert.deepEqual(runtime.skillPermissions, {});
+      const skillRoot = path.join(runtimeRoot, "skills");
+      assert.deepEqual(runtime.skillPaths, [skillRoot]);
+      assert.strictEqual(runtime.skillPermissions["random-subagent-test"], "allow");
       assert.isUndefined(runtime.preloadSystemPrompt);
+      const skillBody = yield* fs.readFileString(
+        path.join(skillRoot, "random-subagent-test", "SKILL.md"),
+      );
+      assert.include(skillBody, "Call `t3_subagent`");
     }),
   );
 

@@ -15,6 +15,15 @@ import {
 } from "./baseSchemas.ts";
 import { T3CapabilityEventProvenance } from "./capability.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { ToolCallGroupTraceContext } from "./orchestration.ts";
+import {
+  ToolCallGroupId,
+  ToolCallGroupItemStatus,
+  ToolCallGroupMetadata,
+  ToolCallGroupPolicy,
+  ToolCallGroupedResult,
+  ToolCallId,
+} from "./toolCallGroup.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -183,6 +192,14 @@ const ProviderRuntimeEventType = Schema.Literals([
   "hook.completed",
   "tool.progress",
   "tool.summary",
+  "tool.group.started",
+  "tool.group.item.started",
+  "tool.group.item.completed",
+  "tool.group.item.failed",
+  "tool.group.completed",
+  "tool.group.failed",
+  "tool.group.timed_out",
+  "tool.group.cancelled",
   "auth.status",
   "account.updated",
   "account.rate-limits.updated",
@@ -233,6 +250,14 @@ const HookProgressType = Schema.Literal("hook.progress");
 const HookCompletedType = Schema.Literal("hook.completed");
 const ToolProgressType = Schema.Literal("tool.progress");
 const ToolSummaryType = Schema.Literal("tool.summary");
+const ToolGroupStartedType = Schema.Literal("tool.group.started");
+const ToolGroupItemStartedType = Schema.Literal("tool.group.item.started");
+const ToolGroupItemCompletedType = Schema.Literal("tool.group.item.completed");
+const ToolGroupItemFailedType = Schema.Literal("tool.group.item.failed");
+const ToolGroupCompletedType = Schema.Literal("tool.group.completed");
+const ToolGroupFailedType = Schema.Literal("tool.group.failed");
+const ToolGroupTimedOutType = Schema.Literal("tool.group.timed_out");
+const ToolGroupCancelledType = Schema.Literal("tool.group.cancelled");
 const AuthStatusType = Schema.Literal("auth.status");
 const AccountUpdatedType = Schema.Literal("account.updated");
 const AccountRateLimitsUpdatedType = Schema.Literal("account.rate-limits.updated");
@@ -407,6 +432,8 @@ export const ItemLifecyclePayload = Schema.Struct({
   status: Schema.optional(RuntimeItemStatus),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  toolCallId: Schema.optional(ToolCallId),
+  ...ToolCallGroupMetadata.fields,
   ...T3CapabilityEventProvenance.fields,
   data: Schema.optional(Schema.Unknown),
 });
@@ -523,6 +550,38 @@ const ToolSummaryPayload = Schema.Struct({
   precedingToolUseIds: Schema.optional(Schema.Array(TrimmedNonEmptyStringSchema)),
 });
 export type ToolSummaryPayload = typeof ToolSummaryPayload.Type;
+
+const ToolGroupStartedPayload = Schema.Struct({
+  groupId: ToolCallGroupId,
+  policy: ToolCallGroupPolicy,
+  expectedToolCallIds: Schema.Array(ToolCallId),
+  expectedCount: NonNegativeInt,
+  title: Schema.optional(TrimmedNonEmptyStringSchema),
+  timeoutMs: Schema.optional(NonNegativeInt),
+  trace: Schema.optional(ToolCallGroupTraceContext),
+});
+export type ToolGroupStartedPayload = typeof ToolGroupStartedPayload.Type;
+
+const ToolGroupItemPayload = Schema.Struct({
+  groupId: ToolCallGroupId,
+  toolCallId: ToolCallId,
+  index: NonNegativeInt,
+  name: TrimmedNonEmptyStringSchema,
+  status: ToolCallGroupItemStatus,
+  result: Schema.optional(Schema.Unknown),
+  error: Schema.optional(Schema.Unknown),
+  trace: Schema.optional(ToolCallGroupTraceContext),
+});
+export type ToolGroupItemPayload = typeof ToolGroupItemPayload.Type;
+
+const ToolGroupTerminalPayload = Schema.Struct({
+  groupId: ToolCallGroupId,
+  policy: ToolCallGroupPolicy,
+  result: Schema.optional(ToolCallGroupedResult),
+  reason: Schema.optional(TrimmedNonEmptyStringSchema),
+  trace: Schema.optional(ToolCallGroupTraceContext),
+});
+export type ToolGroupTerminalPayload = typeof ToolGroupTerminalPayload.Type;
 
 const AuthStatusPayload = Schema.Struct({
   isAuthenticating: Schema.optional(Schema.Boolean),
@@ -879,6 +938,68 @@ const ProviderRuntimeToolSummaryEvent = Schema.Struct({
 });
 export type ProviderRuntimeToolSummaryEvent = typeof ProviderRuntimeToolSummaryEvent.Type;
 
+const ProviderRuntimeToolGroupStartedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ToolGroupStartedType,
+  payload: ToolGroupStartedPayload,
+});
+export type ProviderRuntimeToolGroupStartedEvent = typeof ProviderRuntimeToolGroupStartedEvent.Type;
+
+const ProviderRuntimeToolGroupItemStartedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ToolGroupItemStartedType,
+  payload: ToolGroupItemPayload,
+});
+export type ProviderRuntimeToolGroupItemStartedEvent =
+  typeof ProviderRuntimeToolGroupItemStartedEvent.Type;
+
+const ProviderRuntimeToolGroupItemCompletedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ToolGroupItemCompletedType,
+  payload: ToolGroupItemPayload,
+});
+export type ProviderRuntimeToolGroupItemCompletedEvent =
+  typeof ProviderRuntimeToolGroupItemCompletedEvent.Type;
+
+const ProviderRuntimeToolGroupItemFailedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ToolGroupItemFailedType,
+  payload: ToolGroupItemPayload,
+});
+export type ProviderRuntimeToolGroupItemFailedEvent =
+  typeof ProviderRuntimeToolGroupItemFailedEvent.Type;
+
+const ProviderRuntimeToolGroupCompletedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ToolGroupCompletedType,
+  payload: ToolGroupTerminalPayload,
+});
+export type ProviderRuntimeToolGroupCompletedEvent =
+  typeof ProviderRuntimeToolGroupCompletedEvent.Type;
+
+const ProviderRuntimeToolGroupFailedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ToolGroupFailedType,
+  payload: ToolGroupTerminalPayload,
+});
+export type ProviderRuntimeToolGroupFailedEvent = typeof ProviderRuntimeToolGroupFailedEvent.Type;
+
+const ProviderRuntimeToolGroupTimedOutEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ToolGroupTimedOutType,
+  payload: ToolGroupTerminalPayload,
+});
+export type ProviderRuntimeToolGroupTimedOutEvent =
+  typeof ProviderRuntimeToolGroupTimedOutEvent.Type;
+
+const ProviderRuntimeToolGroupCancelledEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ToolGroupCancelledType,
+  payload: ToolGroupTerminalPayload,
+});
+export type ProviderRuntimeToolGroupCancelledEvent =
+  typeof ProviderRuntimeToolGroupCancelledEvent.Type;
+
 const ProviderRuntimeAuthStatusEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: AuthStatusType,
@@ -1003,6 +1124,14 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeHookCompletedEvent,
   ProviderRuntimeToolProgressEvent,
   ProviderRuntimeToolSummaryEvent,
+  ProviderRuntimeToolGroupStartedEvent,
+  ProviderRuntimeToolGroupItemStartedEvent,
+  ProviderRuntimeToolGroupItemCompletedEvent,
+  ProviderRuntimeToolGroupItemFailedEvent,
+  ProviderRuntimeToolGroupCompletedEvent,
+  ProviderRuntimeToolGroupFailedEvent,
+  ProviderRuntimeToolGroupTimedOutEvent,
+  ProviderRuntimeToolGroupCancelledEvent,
   ProviderRuntimeAuthStatusEvent,
   ProviderRuntimeAccountUpdatedEvent,
   ProviderRuntimeAccountRateLimitsUpdatedEvent,

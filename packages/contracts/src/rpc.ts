@@ -49,6 +49,8 @@ import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
+  OrchestrationAgentLifecycleControlInput,
+  OrchestrationAgentTreeGetInput,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetSnapshotError,
@@ -653,6 +655,25 @@ export const WsOrchestrationGetFullThreadDiffRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationGetAgentTreeRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getAgentTree, {
+  payload: OrchestrationAgentTreeGetInput,
+  success: OrchestrationRpcSchemas.getAgentTree.output,
+  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+});
+
+export const WsOrchestrationControlAgentLifecycleRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.controlAgentLifecycle,
+  {
+    payload: OrchestrationAgentLifecycleControlInput,
+    success: OrchestrationRpcSchemas.controlAgentLifecycle.output,
+    error: Schema.Union([
+      OrchestrationDispatchCommandError,
+      OrchestrationGetSnapshotError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+
 export const WsOrchestrationGetProjectModelAnalyticsRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.getProjectModelAnalytics,
   {
@@ -689,6 +710,16 @@ export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
   {
     payload: OrchestrationRpcSchemas.subscribeThread.input,
     success: OrchestrationRpcSchemas.subscribeThread.output,
+    error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
+export const WsOrchestrationSubscribeAgentTreeRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.subscribeAgentTree,
+  {
+    payload: OrchestrationRpcSchemas.subscribeAgentTree.input,
+    success: OrchestrationRpcSchemas.subscribeAgentTree.output,
     error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
     stream: true,
   },
@@ -798,9 +829,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
+  WsOrchestrationGetAgentTreeRpc,
+  WsOrchestrationControlAgentLifecycleRpc,
   WsOrchestrationGetProjectModelAnalyticsRpc,
   WsOrchestrationReplayEventsRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsOrchestrationSubscribeAgentTreeRpc,
 );

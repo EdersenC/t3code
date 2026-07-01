@@ -26,6 +26,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+import { T3_HARNESS_SYSTEM_INSTRUCTIONS } from "../T3HarnessInstructions.ts";
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,
@@ -560,7 +561,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       });
 
       const prompt = runtimeMock.state.promptCalls.at(-1) as Record<string, unknown> | undefined;
-      NodeAssert.equal(prompt?.system, "T3 capability preload:\n- Test: Follow T3 policy.");
+      NodeAssert.equal(
+        prompt?.system,
+        `${T3_HARNESS_SYSTEM_INSTRUCTIONS}\n\nT3 capability preload:\n- Test: Follow T3 policy.`,
+      );
       NodeAssert.equal(Object.hasOwn(prompt ?? {}, "agent"), false);
     }).pipe(Effect.provide(adapterLayer));
   });
@@ -1248,6 +1252,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         },
         agent: "github-copilot",
         variant: "high",
+        system: T3_HARNESS_SYSTEM_INSTRUCTIONS,
         parts: [{ type: "text", text: "Fix it" }],
       });
     }).pipe(Effect.provide(adapterLayer));
@@ -1290,6 +1295,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           providerID: "anthropic",
           modelID: "claude-sonnet-4-5",
         },
+        system: T3_HARNESS_SYSTEM_INSTRUCTIONS,
         parts: [{ type: "text", text: "Fix it" }],
       });
     }).pipe(Effect.provide(adapterLayer));

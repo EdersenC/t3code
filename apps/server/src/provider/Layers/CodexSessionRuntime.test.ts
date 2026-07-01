@@ -12,6 +12,7 @@ import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
+import { T3_HARNESS_SYSTEM_INSTRUCTIONS } from "../T3HarnessInstructions.ts";
 import {
   buildTurnStartParams,
   hasConfiguredMcpServer,
@@ -195,16 +196,16 @@ describe("buildTurnStartParams", () => {
 });
 
 describe("T3 browser developer instructions", () => {
-  it("prefers the product-native preview tools in both collaboration modes", () => {
+  it("injects T3 harness instructions first in both collaboration modes", () => {
     for (const instructions of [
       CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
       CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
     ]) {
+      NodeAssert.equal(instructions.startsWith(T3_HARNESS_SYSTEM_INSTRUCTIONS), true);
       NodeAssert.match(instructions, /t3-code/);
       NodeAssert.match(instructions, /t3_subagent/);
-      NodeAssert.match(instructions, /tool_search/);
-      NodeAssert.match(instructions, /mcp__t3_code/);
-      NodeAssert.match(instructions, /explore/);
+      NodeAssert.match(instructions, /primary orchestration harness/);
+      NodeAssert.match(instructions, /Do not use legacy T3 agent profiles/);
       NodeAssert.doesNotMatch(instructions, /preview_status/);
       NodeAssert.doesNotMatch(instructions, /preview_open/);
     }

@@ -37,6 +37,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import { T3_HARNESS_SYSTEM_INSTRUCTIONS } from "../T3HarnessInstructions.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -679,7 +680,11 @@ describe("ClaudeAdapterLive", () => {
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "high");
       const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
-      assert.equal(promptText, "Ultrathink:\nInvestigate the edge cases");
+      if (promptText === undefined) {
+        throw new Error("Expected Claude prompt text");
+      }
+      assert.isTrue(promptText.startsWith(T3_HARNESS_SYSTEM_INSTRUCTIONS));
+      assert.include(promptText, "User request:\nUltrathink:\nInvestigate the edge cases");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -731,11 +736,19 @@ describe("ClaudeAdapterLive", () => {
       const createInput = harness.getLastCreateQueryInput();
       const promptMessage = yield* Effect.promise(() => readFirstPromptMessage(createInput));
       assert.isDefined(promptMessage);
-      assert.deepEqual(promptMessage?.message.content, [
-        {
-          type: "text",
-          text: "What's in this image?",
-        },
+      const promptContent = promptMessage?.message.content;
+      if (!Array.isArray(promptContent)) {
+        throw new Error("Expected Claude prompt content blocks");
+      }
+      const firstPromptContent = promptContent[0];
+      if (
+        typeof firstPromptContent === "string" ||
+        firstPromptContent === undefined ||
+        firstPromptContent.type !== "text"
+      ) {
+        throw new Error("Expected Claude prompt to start with text content");
+      }
+      assert.deepEqual(promptContent.slice(1), [
         {
           type: "image",
           source: {
@@ -745,6 +758,41 @@ describe("ClaudeAdapterLive", () => {
           },
         },
       ]);
+      assert.match(
+        firstPromptContent.text,
+        new RegExp(`^${T3_HARNESS_SYSTEM_INSTRUCTIONS.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+      );
+      assert.include(firstPromptContent.text, "User request:\nWhat's in this image?");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps T3 harness instructions first in Claude text prompts", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: ThreadId.make("thread-claude-t3-harness"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "Summarize this repo.",
+        attachments: [],
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
+      if (promptText === undefined) {
+        throw new Error("Expected Claude prompt text");
+      }
+      assert.isTrue(promptText.startsWith(T3_HARNESS_SYSTEM_INSTRUCTIONS));
+      assert.include(promptText, "User request:\nSummarize this repo.");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

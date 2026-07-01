@@ -52,15 +52,14 @@ const capabilities: T3CapabilitySnapshot = {
       toolName: "t3_subagent",
     },
     {
-      id: "t3:subagent:explore",
-      name: "explore",
-      kind: "subagent",
+      id: "t3:skill:random-subagent-test",
+      name: "random-subagent-test",
+      kind: "skill",
       activation: "on-demand",
       source: "t3",
       enabled: true,
-      readonly: false,
-      toolName: "t3_subagent",
-      subagentType: "explore",
+      readonly: true,
+      description: "Verify T3 subagent wiring.",
     },
     {
       id: "t3:user-skill:repo-workflow",
@@ -130,7 +129,7 @@ describe("capability composer helpers", () => {
         capabilities,
         selectedProviderStatus: providerStatus,
       }).map((skill) => skill.name),
-    ).toEqual(["repo-workflow", "customize-opencode", "provider-only"]);
+    ).toEqual(["random-subagent-test", "repo-workflow", "customize-opencode", "provider-only"]);
   });
 
   it("separates T3 and provider command capabilities", () => {
@@ -148,7 +147,6 @@ describe("capability composer helpers", () => {
   it("lists tools and subagents separately from dollar skills", () => {
     expect(toolRegistryCapabilities({ capabilities }).map((capability) => capability.id)).toEqual([
       "t3:tool:subagent",
-      "t3:subagent:explore",
     ]);
   });
 });

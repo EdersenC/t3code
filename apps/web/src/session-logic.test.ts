@@ -1019,11 +1019,11 @@ describe("deriveWorkLogEntries", () => {
         summary: "Explore subagent started",
         tone: "tool",
         payload: {
-          capabilityId: "t3:subagent:explore",
-          capabilityKind: "subagent",
+          capabilityId: "t3:tool:subagent",
+          capabilityKind: "tool",
           capabilitySource: "t3",
           toolName: "t3_subagent",
-          subagentType: "explore",
+          subagentType: "custom",
           childThreadId: "thread-child",
         },
       }),
@@ -1034,9 +1034,63 @@ describe("deriveWorkLogEntries", () => {
       id: "t3-subagent-started",
       label: "Explore subagent started",
       sourceActivityKind: "t3.subagent.started",
-      capabilityId: "t3:subagent:explore",
-      capabilityKind: "subagent",
+      capabilityId: "t3:tool:subagent",
+      capabilityKind: "tool",
       capabilitySource: "t3",
+    });
+  });
+
+  it("preserves spawned T3 subagent child links on work log entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "t3-subagents-spawned",
+        kind: "t3.subagents.spawned",
+        summary: "3 subagents started",
+        tone: "tool",
+        payload: {
+          capabilityId: "t3:tool:subagent",
+          capabilityKind: "tool",
+          capabilitySource: "t3",
+          toolName: "t3_subagent",
+          children: [
+            {
+              threadId: "thread-child-explore",
+              title: "Subagent A",
+              type: "custom",
+              status: "started",
+            },
+            {
+              threadId: "thread-child-review",
+              title: "Subagent B",
+              type: "custom",
+              status: "started",
+            },
+          ],
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      id: "t3-subagents-spawned",
+      label: "3 subagents started",
+      sourceActivityKind: "t3.subagents.spawned",
+      capabilityId: "t3:tool:subagent",
+      capabilityKind: "tool",
+      subagentChildren: [
+        {
+          threadId: ThreadId.make("thread-child-explore"),
+          title: "Subagent A",
+          type: "custom",
+          status: "started",
+        },
+        {
+          threadId: ThreadId.make("thread-child-review"),
+          title: "Subagent B",
+          type: "custom",
+          status: "started",
+        },
+      ],
     });
   });
 
@@ -1056,6 +1110,35 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolLifecycleStatus).toBe("completed");
+  });
+
+  it("preserves grouped tool-call work log metadata", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-group-item",
+        kind: "tool.group.item.completed",
+        summary: "read completed",
+        tone: "tool",
+        payload: {
+          groupId: "tool-group-1",
+          toolCallId: "tool-a",
+          index: 0,
+          name: "read package.json",
+          status: "completed",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      id: "tool-group-item",
+      label: "read completed",
+      sourceActivityKind: "tool.group.item.completed",
+      detail: "Group tool-group-1 - item 1 - read package.json - completed",
+      toolCallId: "tool-a",
+      toolCallGroupId: "tool-group-1",
+      toolCallIndex: 0,
+    });
   });
 
   it("preserves MCP server, tool, arguments, and results for expanded display", () => {

@@ -68,6 +68,7 @@ import {
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { prefixT3HarnessPromptText } from "../T3HarnessInstructions.ts";
 
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 
@@ -937,52 +938,51 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
 
-              const text = input.input?.trim();
-              const imagePromptParts = yield* Effect.forEach(
-                input.attachments ?? [],
-                (attachment) =>
-                  Effect.gen(function* () {
-                    const attachmentPath = resolveAttachmentPath({
-                      attachmentsDir: serverConfig.attachmentsDir,
-                      attachment,
-                    });
-                    if (!attachmentPath) {
-                      return yield* new ProviderAdapterRequestError({
-                        provider: PROVIDER,
-                        method: "session/prompt",
-                        detail: `Invalid attachment id '${attachment.id}'.`,
-                      });
-                    }
-                    const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
-                      Effect.mapError(
-                        (cause) =>
-                          new ProviderAdapterRequestError({
-                            provider: PROVIDER,
-                            method: "session/prompt",
-                            detail: cause.message,
-                            cause,
-                          }),
-                      ),
-                    );
-                    return {
-                      type: "image",
-                      data: Buffer.from(bytes).toString("base64"),
-                      mimeType: attachment.mimeType,
-                    } satisfies EffectAcpSchema.ContentBlock;
-                  }),
-              );
-              const promptParts: Array<EffectAcpSchema.ContentBlock> = [
-                ...(text ? [{ type: "text" as const, text }] : []),
-                ...imagePromptParts,
-              ];
-
-              if (promptParts.length === 0) {
+              const rawText = input.input?.trim() ?? "";
+              const attachments = input.attachments ?? [];
+              if (rawText.length === 0 && attachments.length === 0) {
                 return yield* new ProviderAdapterValidationError({
                   provider: PROVIDER,
                   operation: "sendTurn",
                   issue: "Turn requires non-empty text or attachments.",
                 });
               }
+
+              const imagePromptParts = yield* Effect.forEach(attachments, (attachment) =>
+                Effect.gen(function* () {
+                  const attachmentPath = resolveAttachmentPath({
+                    attachmentsDir: serverConfig.attachmentsDir,
+                    attachment,
+                  });
+                  if (!attachmentPath) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: PROVIDER,
+                      method: "session/prompt",
+                      detail: `Invalid attachment id '${attachment.id}'.`,
+                    });
+                  }
+                  const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapterRequestError({
+                          provider: PROVIDER,
+                          method: "session/prompt",
+                          detail: cause.message,
+                          cause,
+                        }),
+                    ),
+                  );
+                  return {
+                    type: "image",
+                    data: Buffer.from(bytes).toString("base64"),
+                    mimeType: attachment.mimeType,
+                  } satisfies EffectAcpSchema.ContentBlock;
+                }),
+              );
+              const promptParts: Array<EffectAcpSchema.ContentBlock> = [
+                { type: "text", text: prefixT3HarnessPromptText(rawText) },
+                ...imagePromptParts,
+              ];
 
               ctx.currentModelId = currentModelId;
               const displayModel = currentModelId
