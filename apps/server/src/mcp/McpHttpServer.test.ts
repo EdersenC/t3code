@@ -117,8 +117,6 @@ const makeRegistry = (settings?: Parameters<typeof ServerSettingsService.layerTe
   McpSessionRegistry.__testing
     .make({
       now: () => 1_000,
-      idleTimeoutMs: 100,
-      maximumLifetimeMs: 1_000,
     })
     .pipe(
       Effect.provide(

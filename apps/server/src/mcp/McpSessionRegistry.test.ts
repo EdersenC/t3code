@@ -30,8 +30,6 @@ const makeRegistry = (
   McpSessionRegistry.__testing
     .make({
       now,
-      idleTimeoutMs: 100,
-      maximumLifetimeMs: 1_000,
     })
     .pipe(
       Effect.provide(
