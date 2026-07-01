@@ -49,6 +49,7 @@ import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
+  OrchestrationAgentLifecycleControlInput,
   OrchestrationAgentTreeGetInput,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
@@ -660,6 +661,19 @@ export const WsOrchestrationGetAgentTreeRpc = Rpc.make(ORCHESTRATION_WS_METHODS.
   error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
 });
 
+export const WsOrchestrationControlAgentLifecycleRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.controlAgentLifecycle,
+  {
+    payload: OrchestrationAgentLifecycleControlInput,
+    success: OrchestrationRpcSchemas.controlAgentLifecycle.output,
+    error: Schema.Union([
+      OrchestrationDispatchCommandError,
+      OrchestrationGetSnapshotError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+
 export const WsOrchestrationGetProjectModelAnalyticsRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.getProjectModelAnalytics,
   {
@@ -816,6 +830,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationGetAgentTreeRpc,
+  WsOrchestrationControlAgentLifecycleRpc,
   WsOrchestrationGetProjectModelAnalyticsRpc,
   WsOrchestrationReplayEventsRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,
