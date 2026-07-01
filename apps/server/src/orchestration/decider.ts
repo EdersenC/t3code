@@ -18,6 +18,7 @@ import {
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
+  validateThreadCreateAgentMetadata,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 
@@ -222,7 +223,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      return {
+      const agentMetadata = yield* validateThreadCreateAgentMetadata({ readModel, command });
+      const threadCreatedEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -239,10 +241,68 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          agentMetadata,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
       };
+      if (agentMetadata.agentRole === "root") {
+        return threadCreatedEvent;
+      }
+      const parentThreadId = agentMetadata.parentThreadId;
+      if (parentThreadId === undefined) {
+        return yield* Effect.die(
+          new Error("Subagent metadata missing parentThreadId after validation."),
+        );
+      }
+
+      const spawnedEvent: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "agent.spawned",
+        payload: {
+          metadata: agentMetadata,
+          spawnedAt: command.createdAt,
+        },
+      };
+
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: parentThreadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "agent.spawn.requested",
+          payload: {
+            rootThreadId: agentMetadata.rootThreadId,
+            parentThreadId,
+            childThreadId: command.threadId,
+            projectId: command.projectId,
+            agentKind: agentMetadata.agentKind,
+            ...(agentMetadata.displayName !== undefined
+              ? { displayName: agentMetadata.displayName }
+              : {}),
+            ...(agentMetadata.spawnedByTurnId !== undefined
+              ? { spawnedByTurnId: agentMetadata.spawnedByTurnId }
+              : {}),
+            ...(agentMetadata.spawnedByToolCallId !== undefined
+              ? { spawnedByToolCallId: agentMetadata.spawnedByToolCallId }
+              : {}),
+            ...(agentMetadata.spawnGroupId !== undefined
+              ? { spawnGroupId: agentMetadata.spawnGroupId }
+              : {}),
+            requestedAt: command.createdAt,
+          },
+        },
+        threadCreatedEvent,
+        spawnedEvent,
+      ];
     }
 
     case "thread.delete": {

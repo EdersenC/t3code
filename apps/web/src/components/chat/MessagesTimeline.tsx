@@ -4,6 +4,7 @@ import {
   type OrchestrationThreadActivity,
   type ScopedThreadRef,
   type ServerProviderSkill,
+  type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import type { AgentActivityCopyStyle } from "@t3tools/contracts/settings";
@@ -22,6 +23,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { flushSync } from "react-dom";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
@@ -1528,6 +1530,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const { workEntry, workspaceRoot } = props;
   const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
+  const navigate = useNavigate();
   const isRuntimeDiagnostic =
     workEntry.sourceActivityKind === "runtime.error" ||
     workEntry.sourceActivityKind === "runtime.warning";
@@ -1571,6 +1574,16 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const status = resolveWorkEntryStatus(workEntry, turnSettled);
   const showNeutralIndicator = status === "running" || status === "empty";
   const showSuccessIndicator = status === "completed";
+  const subagentChildren = workEntry.subagentChildren ?? [];
+  const openSubagent = (threadId: ThreadId) => {
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: {
+        environmentId: ctx.activeThreadEnvironmentId,
+        threadId,
+      },
+    });
+  };
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,
@@ -1694,6 +1707,26 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           </div>
         </div>
       </div>
+      {subagentChildren.length > 0 ? (
+        <div className="ms-7 mt-1 flex flex-wrap gap-1.5" onClick={stopRowToggle}>
+          {subagentChildren.map((child) => (
+            <button
+              key={child.threadId}
+              type="button"
+              className="inline-flex max-w-56 items-center gap-1 rounded border border-border/70 bg-card/70 px-2 py-0.5 text-[11px] text-muted-foreground transition hover:border-border hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                openSubagent(child.threadId);
+              }}
+              onKeyDown={stopRowToggle}
+            >
+              <BotIcon className="size-3 shrink-0 opacity-70" />
+              <span className="truncate">{child.title}</span>
+              {child.type ? <span className="shrink-0 opacity-60">{child.type}</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {expanded && canExpand && expandedBody ? (
         <div
           className={cn(

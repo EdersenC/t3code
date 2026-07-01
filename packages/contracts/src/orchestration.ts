@@ -26,11 +26,13 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getAgentTree: "orchestration.agentTree.get",
   getProjectModelAnalytics: "orchestration.getProjectModelAnalytics",
   replayEvents: "orchestration.replayEvents",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
+  subscribeAgentTree: "orchestration.agentTree.subscribe",
 } as const;
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -323,6 +325,28 @@ export const OrchestrationThreadActivity = Schema.Struct({
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
+export const AgentRole = Schema.Literals(["root", "subagent"]);
+export type AgentRole = typeof AgentRole.Type;
+
+export const AgentKind = Schema.Literals(["root", "explore", "implement", "review", "custom"]);
+export type AgentKind = typeof AgentKind.Type;
+
+export const AgentThreadMetadata = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  rootThreadId: ThreadId,
+  parentThreadId: Schema.optional(ThreadId),
+  agentRole: AgentRole,
+  agentKind: AgentKind,
+  displayName: Schema.optional(TrimmedNonEmptyString),
+  depth: NonNegativeInt,
+  spawnedByTurnId: Schema.optional(TurnId),
+  spawnedByToolCallId: Schema.optional(TrimmedNonEmptyString),
+  spawnGroupId: Schema.optional(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+export type AgentThreadMetadata = typeof AgentThreadMetadata.Type;
+
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
   "interrupted",
@@ -353,6 +377,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  agentMetadata: Schema.optional(AgentThreadMetadata),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -399,6 +424,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  agentMetadata: Schema.optional(AgentThreadMetadata),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -418,6 +444,110 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
+
+export interface OrchestrationAgentTreeNode {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly agentMetadata: AgentThreadMetadata;
+  readonly session: OrchestrationSession | null;
+  readonly latestTurn: OrchestrationLatestTurn | null;
+  readonly updatedAt: string;
+  readonly archivedAt: string | null;
+  readonly deletedAt: string | null;
+  readonly hasPendingApprovals: boolean;
+  readonly hasPendingUserInput: boolean;
+  readonly children: readonly OrchestrationAgentTreeNode[];
+}
+
+export const OrchestrationAgentTreeNode: Schema.Codec<OrchestrationAgentTreeNode, unknown> =
+  Schema.Struct({
+    threadId: ThreadId,
+    projectId: ProjectId,
+    title: TrimmedNonEmptyString,
+    agentMetadata: AgentThreadMetadata,
+    session: Schema.NullOr(OrchestrationSession),
+    latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+    updatedAt: IsoDateTime,
+    archivedAt: Schema.NullOr(IsoDateTime),
+    deletedAt: Schema.NullOr(IsoDateTime),
+    hasPendingApprovals: Schema.Boolean,
+    hasPendingUserInput: Schema.Boolean,
+    children: Schema.Array(
+      Schema.suspend(
+        (): Schema.Codec<OrchestrationAgentTreeNode, unknown> => OrchestrationAgentTreeNode,
+      ),
+    ),
+  });
+
+export const OrchestrationAgentTree = Schema.Struct({
+  rootThreadId: ThreadId,
+  projectId: ProjectId,
+  root: OrchestrationAgentTreeNode,
+  activeAgentCount: NonNegativeInt,
+  totalAgentCount: NonNegativeInt,
+});
+export type OrchestrationAgentTree = typeof OrchestrationAgentTree.Type;
+
+export const OrchestrationAgentTreeStatus = Schema.Literals([
+  "idle",
+  "running",
+  "waiting-on-tools",
+  "waiting-on-user",
+  "complete",
+  "failed",
+  "interrupted",
+  "stopped",
+]);
+export type OrchestrationAgentTreeStatus = typeof OrchestrationAgentTreeStatus.Type;
+
+export const OrchestrationAgentTreeSnapshotAgent = Schema.Struct({
+  threadId: ThreadId,
+  parentThreadId: Schema.optional(ThreadId),
+  rootThreadId: ThreadId,
+  depth: NonNegativeInt,
+  displayName: TrimmedNonEmptyString,
+  agentKind: AgentKind,
+  status: OrchestrationAgentTreeStatus,
+  latestActivityAt: IsoDateTime,
+  spawnedByTurnId: Schema.optional(TurnId),
+  spawnedByToolCallId: Schema.optional(TrimmedNonEmptyString),
+  spawnGroupId: Schema.optional(TrimmedNonEmptyString),
+  childrenCount: NonNegativeInt,
+  createdAt: IsoDateTime,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+});
+export type OrchestrationAgentTreeSnapshotAgent = typeof OrchestrationAgentTreeSnapshotAgent.Type;
+
+export const OrchestrationAgentTreeSnapshot = Schema.Struct({
+  rootThreadId: ThreadId,
+  projectId: ProjectId,
+  agents: Schema.Array(OrchestrationAgentTreeSnapshotAgent),
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationAgentTreeSnapshot = typeof OrchestrationAgentTreeSnapshot.Type;
+
+export const OrchestrationAgentTreeGetInput = Schema.Struct({
+  rootThreadId: ThreadId,
+});
+export type OrchestrationAgentTreeGetInput = typeof OrchestrationAgentTreeGetInput.Type;
+
+export const OrchestrationAgentTreeStreamItem = Schema.Struct({
+  kind: Schema.Literal("snapshot"),
+  snapshot: OrchestrationAgentTreeSnapshot,
+});
+export type OrchestrationAgentTreeStreamItem = typeof OrchestrationAgentTreeStreamItem.Type;
+
+export const OrchestrationProjectRootSessionAgentSummary = Schema.Struct({
+  projectId: ProjectId,
+  rootThreadId: ThreadId,
+  title: TrimmedNonEmptyString,
+  activeAgentCount: NonNegativeInt,
+  totalAgentCount: NonNegativeInt,
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationProjectRootSessionAgentSummary =
+  typeof OrchestrationProjectRootSessionAgentSummary.Type;
 
 export const OrchestrationShellStreamEvent = Schema.Union([
   Schema.Struct({
@@ -504,6 +634,18 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  agentMetadata: Schema.optional(
+    Schema.Struct({
+      rootThreadId: Schema.optional(ThreadId),
+      parentThreadId: Schema.optional(ThreadId),
+      agentRole: Schema.optional(AgentRole),
+      agentKind: Schema.optional(AgentKind),
+      displayName: Schema.optional(TrimmedNonEmptyString),
+      spawnedByTurnId: Schema.optional(TurnId),
+      spawnedByToolCallId: Schema.optional(TrimmedNonEmptyString),
+      spawnGroupId: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
   createdAt: IsoDateTime,
 });
 
@@ -559,6 +701,18 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  agentMetadata: Schema.optional(
+    Schema.Struct({
+      rootThreadId: Schema.optional(ThreadId),
+      parentThreadId: Schema.optional(ThreadId),
+      agentRole: Schema.optional(AgentRole),
+      agentKind: Schema.optional(AgentKind),
+      displayName: Schema.optional(TrimmedNonEmptyString),
+      spawnedByTurnId: Schema.optional(TurnId),
+      spawnedByToolCallId: Schema.optional(TrimmedNonEmptyString),
+      spawnGroupId: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
   createdAt: IsoDateTime,
 });
 
@@ -786,6 +940,10 @@ export const OrchestrationEventType = Schema.Literals([
   "project.meta-updated",
   "project.deleted",
   "thread.created",
+  "agent.spawn.requested",
+  "agent.spawned",
+  "agent.spawn.failed",
+  "agent.status.changed",
   "thread.deleted",
   "thread.archived",
   "thread.unarchived",
@@ -848,8 +1006,55 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  agentMetadata: Schema.optional(AgentThreadMetadata),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+});
+
+export const AgentSpawnRequestedPayload = Schema.Struct({
+  rootThreadId: ThreadId,
+  parentThreadId: ThreadId,
+  childThreadId: ThreadId,
+  projectId: ProjectId,
+  agentKind: AgentKind,
+  displayName: Schema.optional(TrimmedNonEmptyString),
+  spawnedByTurnId: Schema.optional(TurnId),
+  spawnedByToolCallId: Schema.optional(TrimmedNonEmptyString),
+  spawnGroupId: Schema.optional(TrimmedNonEmptyString),
+  requestedAt: IsoDateTime,
+});
+
+export const AgentSpawnedPayload = Schema.Struct({
+  metadata: AgentThreadMetadata,
+  spawnedAt: IsoDateTime,
+});
+
+export const AgentSpawnFailedPayload = Schema.Struct({
+  rootThreadId: Schema.optional(ThreadId),
+  parentThreadId: Schema.optional(ThreadId),
+  childThreadId: ThreadId,
+  projectId: ProjectId,
+  agentKind: AgentKind,
+  reason: TrimmedNonEmptyString,
+  failedAt: IsoDateTime,
+});
+
+export const AgentStatus = Schema.Literals([
+  "created",
+  "starting",
+  "running",
+  "idle",
+  "completed",
+  "failed",
+]);
+export type AgentStatus = typeof AgentStatus.Type;
+
+export const AgentStatusChangedPayload = Schema.Struct({
+  threadId: ThreadId,
+  rootThreadId: ThreadId,
+  parentThreadId: Schema.optional(ThreadId),
+  status: AgentStatus,
+  changedAt: IsoDateTime,
 });
 
 export const ThreadDeletedPayload = Schema.Struct({
@@ -1019,6 +1224,26 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.created"),
     payload: ThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("agent.spawn.requested"),
+    payload: AgentSpawnRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("agent.spawned"),
+    payload: AgentSpawnedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("agent.spawn.failed"),
+    payload: AgentSpawnFailedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("agent.status.changed"),
+    payload: AgentStatusChangedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -1248,6 +1473,10 @@ export const OrchestrationRpcSchemas = {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
   },
+  getAgentTree: {
+    input: OrchestrationAgentTreeGetInput,
+    output: OrchestrationAgentTreeSnapshot,
+  },
   getProjectModelAnalytics: {
     input: OrchestrationProjectModelAnalyticsInput,
     output: OrchestrationModelAnalyticsRollup,
@@ -1263,6 +1492,10 @@ export const OrchestrationRpcSchemas = {
   subscribeThread: {
     input: OrchestrationSubscribeThreadInput,
     output: OrchestrationThreadStreamItem,
+  },
+  subscribeAgentTree: {
+    input: OrchestrationAgentTreeGetInput,
+    output: OrchestrationAgentTreeStreamItem,
   },
   subscribeShell: {
     input: Schema.Struct({}),

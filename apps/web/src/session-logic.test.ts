@@ -1040,6 +1040,60 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("preserves spawned T3 subagent child links on work log entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "t3-subagents-spawned",
+        kind: "t3.subagents.spawned",
+        summary: "3 subagents started",
+        tone: "tool",
+        payload: {
+          capabilityId: "t3:tool:subagent",
+          capabilityKind: "tool",
+          capabilitySource: "t3",
+          toolName: "t3_subagent",
+          children: [
+            {
+              threadId: "thread-child-explore",
+              title: "Explore Agent",
+              type: "explore",
+              status: "started",
+            },
+            {
+              threadId: "thread-child-review",
+              title: "Review Agent",
+              type: "review",
+              status: "started",
+            },
+          ],
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      id: "t3-subagents-spawned",
+      label: "3 subagents started",
+      sourceActivityKind: "t3.subagents.spawned",
+      capabilityId: "t3:tool:subagent",
+      capabilityKind: "tool",
+      subagentChildren: [
+        {
+          threadId: ThreadId.make("thread-child-explore"),
+          title: "Explore Agent",
+          type: "explore",
+          status: "started",
+        },
+        {
+          threadId: ThreadId.make("thread-child-review"),
+          title: "Review Agent",
+          type: "review",
+          status: "started",
+        },
+      ],
+    });
+  });
+
   it("defaults tool.completed entries to completed lifecycle status", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

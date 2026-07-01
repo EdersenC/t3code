@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -1255,6 +1256,64 @@ const make = Effect.gen(function* () {
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
 
+      const appendSubagentLifecycleActivities = (status: {
+        readonly kind: string;
+        readonly tone: "info" | "tool" | "error";
+        readonly summary: string;
+        readonly state: "running" | "completed" | "failed" | "interrupted" | "cancelled";
+        readonly message?: string;
+      }) =>
+        Effect.gen(function* () {
+          const metadata = thread.agentMetadata;
+          if (metadata?.agentRole !== "subagent" || metadata.parentThreadId === undefined) {
+            return;
+          }
+          yield* Effect.forEach(
+            [metadata.parentThreadId, metadata.rootThreadId].filter(
+              (candidate, index, array) => array.indexOf(candidate) === index,
+            ),
+            (targetThreadId) =>
+              Effect.gen(function* () {
+                yield* orchestrationEngine.dispatch({
+                  type: "thread.activity.append",
+                  commandId: yield* providerCommandId(event, "subagent-lifecycle-activity"),
+                  threadId: targetThreadId,
+                  activity: {
+                    id: EventId.make(
+                      `provider:subagent:${status.state}:${thread.id}:${event.eventId}:${targetThreadId}`,
+                    ),
+                    tone: status.tone,
+                    kind: status.kind,
+                    summary: status.summary,
+                    payload: {
+                      capabilityId: "t3:tool:subagent",
+                      capabilityKind: "tool",
+                      capabilitySource: "t3",
+                      toolName: "t3_subagent",
+                      parentThreadId: metadata.parentThreadId,
+                      rootThreadId: metadata.rootThreadId,
+                      childThreadId: thread.id,
+                      childTitle: thread.title,
+                      agentKind: metadata.agentKind,
+                      ...(metadata.spawnGroupId !== undefined
+                        ? { spawnGroupId: metadata.spawnGroupId }
+                        : {}),
+                      status: status.state,
+                      ...(status.message !== undefined ? { message: status.message } : {}),
+                      ...(event.providerInstanceId !== undefined
+                        ? { providerInstanceId: event.providerInstanceId }
+                        : {}),
+                    },
+                    turnId: eventTurnId ?? thread.latestTurn?.turnId ?? null,
+                    createdAt: now,
+                  },
+                  createdAt: now,
+                });
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+        });
+
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
       const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
@@ -1388,6 +1447,36 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+
+          if (event.type === "turn.started") {
+            yield* appendSubagentLifecycleActivities({
+              kind: "t3.subagent.status.changed",
+              tone: "info",
+              summary: `${thread.title} subagent running`,
+              state: "running",
+            });
+          } else if (event.type === "turn.completed") {
+            const state = normalizeRuntimeTurnState(event.payload.state);
+            yield* appendSubagentLifecycleActivities({
+              kind:
+                state === "failed"
+                  ? "t3.subagent.failed"
+                  : state === "interrupted" || state === "cancelled"
+                    ? "t3.subagent.interrupted"
+                    : "t3.subagent.completed",
+              tone: state === "failed" ? "error" : "tool",
+              summary:
+                state === "failed"
+                  ? `${thread.title} subagent failed`
+                  : state === "interrupted" || state === "cancelled"
+                    ? `${thread.title} subagent interrupted`
+                    : `${thread.title} subagent completed`,
+              state,
+              ...(event.payload.errorMessage !== undefined
+                ? { message: event.payload.errorMessage }
+                : {}),
+            });
+          }
         }
       }
 
@@ -1638,7 +1727,24 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+          yield* appendSubagentLifecycleActivities({
+            kind: "t3.subagent.failed",
+            tone: "error",
+            summary: `${thread.title} subagent failed`,
+            state: "failed",
+            message: runtimeErrorMessage,
+          });
         }
+      }
+
+      if (event.type === "turn.aborted") {
+        yield* appendSubagentLifecycleActivities({
+          kind: "t3.subagent.interrupted",
+          tone: "info",
+          summary: `${thread.title} subagent interrupted`,
+          state: "interrupted",
+          message: event.payload.reason,
+        });
       }
 
       if (event.type === "thread.metadata.updated" && event.payload.name) {

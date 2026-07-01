@@ -28,6 +28,9 @@ import {
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  type OrchestrationAgentTreeNode,
+  type OrchestrationAgentTreeSnapshot,
+  type OrchestrationAgentTreeStatus,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -115,6 +118,7 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isOrchestrationGetSnapshotError = Schema.is(OrchestrationGetSnapshotError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -280,11 +284,13 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
   [ORCHESTRATION_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getFullThreadDiff, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.getAgentTree, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getProjectModelAnalytics, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.replayEvents, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.subscribeAgentTree, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
@@ -678,6 +684,120 @@ const makeWsRpcLayer = (
         }
       };
 
+      const agentStatusForNode = (
+        node: OrchestrationAgentTreeNode,
+      ): OrchestrationAgentTreeStatus => {
+        if (node.hasPendingUserInput) {
+          return "waiting-on-user";
+        }
+        if (node.hasPendingApprovals) {
+          return "waiting-on-tools";
+        }
+        if (node.latestTurn?.state === "error" || node.session?.status === "error") {
+          return "failed";
+        }
+        if (node.latestTurn?.state === "interrupted" || node.session?.status === "interrupted") {
+          return "interrupted";
+        }
+        if (node.session?.status === "running" || node.session?.status === "starting") {
+          return "running";
+        }
+        if (node.latestTurn?.state === "running") {
+          return "running";
+        }
+        if (node.session?.status === "stopped") {
+          return "stopped";
+        }
+        if (node.latestTurn?.state === "completed" || node.session?.status === "ready") {
+          return "complete";
+        }
+        return "idle";
+      };
+
+      const latestActivityAtForNode = (node: OrchestrationAgentTreeNode): string =>
+        [
+          node.updatedAt,
+          node.session?.updatedAt,
+          node.latestTurn?.completedAt,
+          node.latestTurn?.startedAt,
+          node.latestTurn?.requestedAt,
+          node.agentMetadata.createdAt,
+        ]
+          .filter((value): value is string => typeof value === "string" && value.length > 0)
+          .sort()
+          .at(-1) ?? node.agentMetadata.createdAt;
+
+      const flattenAgentTree = (
+        node: OrchestrationAgentTreeNode,
+      ): OrchestrationAgentTreeSnapshot["agents"] => {
+        const metadata = node.agentMetadata;
+        return [
+          {
+            threadId: node.threadId,
+            ...(metadata.parentThreadId !== undefined
+              ? { parentThreadId: metadata.parentThreadId }
+              : {}),
+            rootThreadId: metadata.rootThreadId,
+            depth: metadata.depth,
+            displayName: metadata.displayName ?? node.title,
+            agentKind: metadata.agentKind,
+            status: agentStatusForNode(node),
+            latestActivityAt: latestActivityAtForNode(node),
+            ...(metadata.spawnedByTurnId !== undefined
+              ? { spawnedByTurnId: metadata.spawnedByTurnId }
+              : {}),
+            ...(metadata.spawnedByToolCallId !== undefined
+              ? { spawnedByToolCallId: metadata.spawnedByToolCallId }
+              : {}),
+            ...(metadata.spawnGroupId !== undefined ? { spawnGroupId: metadata.spawnGroupId } : {}),
+            childrenCount: node.children.length,
+            createdAt: metadata.createdAt,
+            ...(node.session?.providerInstanceId !== undefined
+              ? { providerInstanceId: node.session.providerInstanceId }
+              : {}),
+          },
+          ...node.children.flatMap(flattenAgentTree),
+        ];
+      };
+
+      const loadAgentTreeSnapshot = (
+        rootThreadId: ThreadId,
+      ): Effect.Effect<OrchestrationAgentTreeSnapshot, OrchestrationGetSnapshotError> =>
+        projectionSnapshotQuery.getAgentTreeByRootThreadId(rootThreadId).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new OrchestrationGetSnapshotError({
+                    message: `Agent tree root ${rootThreadId} was not found`,
+                    cause: rootThreadId,
+                  }),
+                ),
+              onSome: (tree) => {
+                const agents = flattenAgentTree(tree.root);
+                return Effect.succeed({
+                  rootThreadId: tree.rootThreadId,
+                  projectId: tree.projectId,
+                  agents,
+                  updatedAt:
+                    agents
+                      .map((agent) => agent.latestActivityAt)
+                      .sort()
+                      .at(-1) ?? tree.root.agentMetadata.createdAt,
+                });
+              },
+            }),
+          ),
+          Effect.mapError((cause) =>
+            isOrchestrationGetSnapshotError(cause)
+              ? cause
+              : new OrchestrationGetSnapshotError({
+                  message: "Failed to load agent tree",
+                  cause,
+                }),
+          ),
+        );
+
       const dispatchBootstrapTurnStart = (
         command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
@@ -1048,6 +1168,12 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.getAgentTree]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getAgentTree,
+            loadAgentTreeSnapshot(input.rootThreadId),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.getProjectModelAnalytics]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getProjectModelAnalytics,
@@ -1189,6 +1315,29 @@ const makeWsRpcLayer = (
                     snapshotSequence,
                     thread: threadDetail.value,
                   },
+                }),
+                liveStream,
+              );
+            }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.subscribeAgentTree]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_WS_METHODS.subscribeAgentTree,
+            Effect.gen(function* () {
+              const initialSnapshot = yield* loadAgentTreeSnapshot(input.rootThreadId);
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                Stream.filter((event) => event.aggregateKind === "thread"),
+                Stream.mapEffect(() => loadAgentTreeSnapshot(input.rootThreadId)),
+                Stream.map((snapshot) => ({
+                  kind: "snapshot" as const,
+                  snapshot,
+                })),
+              );
+              return Stream.concat(
+                Stream.make({
+                  kind: "snapshot" as const,
+                  snapshot: initialSnapshot,
                 }),
                 liveStream,
               );

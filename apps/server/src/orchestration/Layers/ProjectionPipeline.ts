@@ -593,7 +593,18 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadsProjection",
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
-        case "thread.created":
+        case "thread.created": {
+          const agentMetadata =
+            event.payload.agentMetadata ??
+            ({
+              threadId: event.payload.threadId,
+              projectId: event.payload.projectId,
+              rootThreadId: event.payload.threadId,
+              agentRole: "root",
+              agentKind: "root",
+              depth: 0,
+              createdAt: event.payload.createdAt,
+            } as const);
           yield* projectionThreadRepository.upsert({
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
@@ -603,6 +614,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            rootThreadId: agentMetadata.rootThreadId,
+            parentThreadId: agentMetadata.parentThreadId ?? null,
+            agentRole: agentMetadata.agentRole,
+            agentKind: agentMetadata.agentKind,
+            agentDisplayName: agentMetadata.displayName ?? null,
+            agentDepth: agentMetadata.depth,
+            spawnedByTurnId: agentMetadata.spawnedByTurnId ?? null,
+            spawnedByToolCallId: agentMetadata.spawnedByToolCallId ?? null,
+            spawnGroupId: agentMetadata.spawnGroupId ?? null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -614,6 +634,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             deletedAt: null,
           });
           return;
+        }
 
         case "thread.archived": {
           const existingRow = yield* projectionThreadRepository.getById({

@@ -282,6 +282,15 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            agentMetadata: payload.agentMetadata ?? {
+              threadId: payload.threadId,
+              projectId: payload.projectId,
+              rootThreadId: payload.threadId,
+              agentRole: "root",
+              agentKind: "root",
+              depth: 0,
+              createdAt: payload.createdAt,
+            },
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -303,6 +312,12 @@ export function projectEvent(
             : [...nextBase.threads, thread],
         };
       });
+
+    case "agent.spawn.requested":
+    case "agent.spawned":
+    case "agent.spawn.failed":
+    case "agent.status.changed":
+      return Effect.succeed(nextBase);
 
     case "thread.deleted":
       return decodeForEvent(ThreadDeletedPayload, event.payload, event.type, "payload").pipe(

@@ -11,7 +11,7 @@ import {
   type T3CapabilitySource,
   type ToolLifecycleItemType,
   type UserInputQuestion,
-  type ThreadId,
+  ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 
@@ -98,6 +98,12 @@ export interface WorkLogEntry {
   capabilitySource?: T3CapabilitySource;
   capabilityProviderInstanceId?: string;
   capabilityHarnessName?: string;
+  subagentChildren?: ReadonlyArray<{
+    readonly threadId: ThreadId;
+    readonly title: string;
+    readonly type?: string;
+    readonly status?: string;
+  }>;
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
@@ -757,6 +763,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const itemType = extractWorkLogItemType(payload);
   const capabilityProvenance = extractWorkLogCapabilityProvenance(payload);
   const requestKind = extractWorkLogRequestKind(payload);
+  const subagentChildren = extractSubagentChildren(payload);
   if (detail) {
     entry.detail = detail;
   }
@@ -795,6 +802,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (capabilityProvenance.harnessName) {
     entry.capabilityHarnessName = capabilityProvenance.harnessName;
+  }
+  if (subagentChildren.length > 0) {
+    entry.subagentChildren = subagentChildren;
   }
   if (requestKind) {
     entry.requestKind = requestKind;
@@ -954,6 +964,30 @@ function asTrimmedString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractSubagentChildren(
+  payload: Record<string, unknown> | null,
+): NonNullable<WorkLogEntry["subagentChildren"]> {
+  const children = Array.isArray(payload?.children) ? payload.children : [];
+  return children.flatMap((child) => {
+    const record = asRecord(child);
+    const threadId = asTrimmedString(record?.threadId);
+    const title = asTrimmedString(record?.title);
+    if (!threadId || !title) {
+      return [];
+    }
+    const type = asTrimmedString(record?.type);
+    const status = asTrimmedString(record?.status);
+    return [
+      {
+        threadId: ThreadId.make(threadId),
+        title,
+        ...(type ? { type } : {}),
+        ...(status ? { status } : {}),
+      },
+    ];
+  });
 }
 
 function stringifyDiagnosticDetail(value: unknown): string | null {

@@ -7,7 +7,7 @@ const dependencies = [T3SubagentRuntime.T3SubagentRuntime];
 
 export const T3SubagentTool = Tool.make("t3_subagent", {
   description:
-    "Start a T3-owned subagent thread. Use subagentType 'explore' for read-only discovery, 'implement' for a narrow code change, or 'review' for bug/regression review.",
+    "Start one or more T3-owned subagent threads. Use legacy subagentType/prompt for one agent, or agents[] for fanout. Supported agent types are explore, implement, and review.",
   parameters: T3SubagentRunInput,
   success: T3SubagentRunResult,
   failure: T3SubagentRunError,

@@ -293,6 +293,15 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          agentMetadata: {
+            threadId: ThreadId.make("thread-1"),
+            projectId: asProjectId("project-1"),
+            rootThreadId: ThreadId.make("thread-1"),
+            agentRole: "root",
+            agentKind: "root",
+            depth: 0,
+            createdAt: "2026-02-24T00:00:02.000Z",
+          },
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -403,6 +412,15 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          agentMetadata: {
+            threadId: ThreadId.make("thread-1"),
+            projectId: asProjectId("project-1"),
+            rootThreadId: ThreadId.make("thread-1"),
+            agentRole: "root",
+            agentKind: "root",
+            depth: 0,
+            createdAt: "2026-02-24T00:00:02.000Z",
+          },
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",

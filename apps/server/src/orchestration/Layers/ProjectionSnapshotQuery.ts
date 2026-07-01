@@ -1,4 +1,5 @@
 import {
+  type AgentThreadMetadata,
   ChatAttachment,
   CheckpointRef,
   IsoDateTime,
@@ -50,6 +51,12 @@ import { ProjectionThreadProposedPlan } from "../../persistence/Services/Project
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import {
+  findRootThreadForAgentThread,
+  getAgentTreeForRootThread,
+  listDirectChildAgentThreads,
+  listProjectRootSessionAgentSummaries as buildProjectRootSessionAgentSummaries,
+} from "../agentGraph.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
@@ -224,6 +231,25 @@ function mapSessionRow(
   };
 }
 
+function mapAgentMetadataRow(
+  row: Schema.Schema.Type<typeof ProjectionThreadDbRowSchema>,
+): AgentThreadMetadata {
+  return {
+    threadId: row.threadId,
+    projectId: row.projectId,
+    rootThreadId: row.rootThreadId,
+    ...(row.parentThreadId !== null ? { parentThreadId: row.parentThreadId } : {}),
+    agentRole: row.agentRole,
+    agentKind: row.agentKind,
+    ...(row.agentDisplayName !== null ? { displayName: row.agentDisplayName } : {}),
+    depth: row.agentDepth,
+    ...(row.spawnedByTurnId !== null ? { spawnedByTurnId: row.spawnedByTurnId } : {}),
+    ...(row.spawnedByToolCallId !== null ? { spawnedByToolCallId: row.spawnedByToolCallId } : {}),
+    ...(row.spawnGroupId !== null ? { spawnGroupId: row.spawnGroupId } : {}),
+    createdAt: row.createdAt,
+  };
+}
+
 function mapActivityRow(
   row: Schema.Schema.Type<typeof ProjectionThreadActivityDbRowSchema>,
 ): OrchestrationThreadActivity {
@@ -348,6 +374,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          COALESCE(root_thread_id, thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          COALESCE(agent_role, 'root') AS "agentRole",
+          COALESCE(agent_kind, 'root') AS "agentKind",
+          agent_display_name AS "agentDisplayName",
+          COALESCE(agent_depth, 0) AS "agentDepth",
+          spawned_by_turn_id AS "spawnedByTurnId",
+          spawned_by_tool_call_id AS "spawnedByToolCallId",
+          spawn_group_id AS "spawnGroupId",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -376,6 +411,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          COALESCE(root_thread_id, thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          COALESCE(agent_role, 'root') AS "agentRole",
+          COALESCE(agent_kind, 'root') AS "agentKind",
+          agent_display_name AS "agentDisplayName",
+          COALESCE(agent_depth, 0) AS "agentDepth",
+          spawned_by_turn_id AS "spawnedByTurnId",
+          spawned_by_tool_call_id AS "spawnedByToolCallId",
+          spawn_group_id AS "spawnGroupId",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -406,6 +450,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          COALESCE(root_thread_id, thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          COALESCE(agent_role, 'root') AS "agentRole",
+          COALESCE(agent_kind, 'root') AS "agentKind",
+          agent_display_name AS "agentDisplayName",
+          COALESCE(agent_depth, 0) AS "agentDepth",
+          spawned_by_turn_id AS "spawnedByTurnId",
+          spawned_by_tool_call_id AS "spawnedByToolCallId",
+          spawn_group_id AS "spawnGroupId",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -768,6 +821,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          COALESCE(root_thread_id, thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          COALESCE(agent_role, 'root') AS "agentRole",
+          COALESCE(agent_kind, 'root') AS "agentKind",
+          agent_display_name AS "agentDisplayName",
+          COALESCE(agent_depth, 0) AS "agentDepth",
+          spawned_by_turn_id AS "spawnedByTurnId",
+          spawned_by_tool_call_id AS "spawnedByToolCallId",
+          spawn_group_id AS "spawnGroupId",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -1242,6 +1304,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 interactionMode: row.interactionMode,
                 branch: row.branch,
                 worktreePath: row.worktreePath,
+                agentMetadata: mapAgentMetadataRow(row),
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
@@ -1440,6 +1503,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  agentMetadata: mapAgentMetadataRow(row),
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
@@ -1569,6 +1633,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       interactionMode: row.interactionMode,
                       branch: row.branch,
                       worktreePath: row.worktreePath,
+                      agentMetadata: mapAgentMetadataRow(row),
                       latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                       createdAt: row.createdAt,
                       updatedAt: row.updatedAt,
@@ -1703,6 +1768,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  agentMetadata: mapAgentMetadataRow(row),
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
@@ -1964,6 +2030,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        agentMetadata: mapAgentMetadataRow(threadRow.value),
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
@@ -2058,6 +2125,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        agentMetadata: mapAgentMetadataRow(threadRow.value),
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
@@ -2101,6 +2169,39 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  const getAgentTreeByRootThreadId: ProjectionSnapshotQueryShape["getAgentTreeByRootThreadId"] = (
+    rootThreadId,
+  ) =>
+    getSnapshot().pipe(
+      Effect.map((snapshot) => {
+        const tree = getAgentTreeForRootThread(snapshot, rootThreadId);
+        return tree === null ? Option.none() : Option.some(tree);
+      }),
+    );
+
+  const getRootThreadForAgentThread: ProjectionSnapshotQueryShape["getRootThreadForAgentThread"] = (
+    threadId,
+  ) =>
+    getSnapshot().pipe(
+      Effect.map((snapshot) => {
+        const rootThread = findRootThreadForAgentThread(snapshot, threadId);
+        return rootThread === null ? Option.none() : Option.some(rootThread);
+      }),
+    );
+
+  const listChildAgentThreads: ProjectionSnapshotQueryShape["listChildAgentThreads"] = (
+    parentThreadId,
+  ) =>
+    getSnapshot().pipe(
+      Effect.map((snapshot) => listDirectChildAgentThreads(snapshot, parentThreadId)),
+    );
+
+  const listProjectRootSessionAgentSummaries: ProjectionSnapshotQueryShape["listProjectRootSessionAgentSummaries"] =
+    (projectId) =>
+      getSnapshot().pipe(
+        Effect.map((snapshot) => buildProjectRootSessionAgentSummaries(snapshot, projectId)),
+      );
+
   return {
     getCommandReadModel,
     getSnapshot,
@@ -2116,6 +2217,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    getAgentTreeByRootThreadId,
+    getRootThreadForAgentThread,
+    listChildAgentThreads,
+    listProjectRootSessionAgentSummaries,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

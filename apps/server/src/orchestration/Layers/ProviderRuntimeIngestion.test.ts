@@ -312,6 +312,10 @@ describe("ProviderRuntimeIngestion", () => {
     return {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      readEvents: () =>
+        Effect.runPromise(
+          Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((chunk) => Array.from(chunk))),
+        ),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
@@ -358,6 +362,74 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("mirrors subagent completion activities onto the parent and root session", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = asThreadId("subagent-child-1");
+    const childTurnId = asTurnId("turn-subagent-child-1");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-subagent-child-create"),
+        threadId: childThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Review child",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        agentMetadata: {
+          rootThreadId: asThreadId("thread-1"),
+          parentThreadId: asThreadId("thread-1"),
+          agentRole: "subagent",
+          agentKind: "review",
+          displayName: "Review child",
+          spawnedByTurnId: asTurnId("turn-parent"),
+          spawnGroupId: "spawn-group-ingestion-test",
+        },
+        createdAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-subagent-child-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      threadId: childThreadId,
+      createdAt: now,
+      turnId: childTurnId,
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const parentThread = await waitForThread(
+      harness.readModel,
+      (thread) => thread.activities.some((activity) => activity.kind === "t3.subagent.completed"),
+      2000,
+      asThreadId("thread-1"),
+    );
+    const activity = parentThread.activities.find(
+      (entry) => entry.kind === "t3.subagent.completed",
+    );
+    expect(activity?.payload).toMatchObject({
+      capabilityId: "t3:tool:subagent",
+      parentThreadId: asThreadId("thread-1"),
+      rootThreadId: asThreadId("thread-1"),
+      childThreadId,
+      childTitle: "Review child",
+      agentKind: "review",
+      spawnGroupId: "spawn-group-ingestion-test",
+      status: "completed",
+    });
   });
 
   it("applies provider session.state.changed transitions directly", async () => {
@@ -1938,11 +2010,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(resumedMessage?.text).toBe(" second half");
     expect(resumedMessage?.streaming).toBe(false);
 
-    const events = await Effect.runPromise(
-      Stream.runCollect(harness.engine.readEvents(0)).pipe(
-        Effect.map((chunk) => Array.from(chunk)),
-      ),
-    );
+    const events = await harness.readEvents();
     const assistantEvents = events.filter(
       (event): event is Extract<(typeof events)[number], { type: "thread.message-sent" }> =>
         event.type === "thread.message-sent" &&
@@ -2294,11 +2362,7 @@ describe("ProviderRuntimeIngestion", () => {
         ),
     );
 
-    const events = await Effect.runPromise(
-      Stream.runCollect(harness.engine.readEvents(0)).pipe(
-        Effect.map((chunk) => Array.from(chunk)),
-      ),
-    );
+    const events = await harness.readEvents();
     const completionEvents = events.filter((event) => {
       if (event.type !== "thread.message-sent") {
         return false;
